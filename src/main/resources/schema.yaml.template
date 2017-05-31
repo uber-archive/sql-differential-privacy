@@ -1,0 +1,10 @@
+---
+databases:
+- database: "my_database"
+  dialect: "postgres"
+  tables:
+  - name: "my_table"
+    columns:
+    - name: "col1"
+    - name: "col2"
+

@@ -1,0 +1,40 @@
+---
+databases:
+- database: "test"
+  dialect: "vertica"
+  namespace: "public"
+  tables:
+  - table: "orders"
+    columns:
+    - name: "order_id"
+      isUnique: true
+    - name: "order_date"
+      canRelease: true
+    - name: "customer_id"
+      maxFreq: 100
+    - name: "product_id"
+      maxFreq: 500
+      canRelease: true
+    - name: "quantity"
+  - table: "products"
+    isPublic: true
+    columns:
+    - name: "product_id"
+      maxFreq: 300
+    - name: "name"
+    - name: "price"
+  - table: "customers"
+    columns:
+    - name: "customer_id"
+      isUnique: true
+    - name: "name"
+      isTainted: true
+    - name: "address"
+      isTainted: true
+      maxFreq: 5
+  - table: "recommendations"
+    columns:
+    - name: "customer_id"
+      maxFreq: 250
+    - name: "product_id"
+      maxFreq: 2000
