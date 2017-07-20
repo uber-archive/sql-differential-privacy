@@ -255,9 +255,17 @@ class ElasticSensitivityAnalysisTest extends TestCase {
 
   def testArithmeticOnResult() = {
     val q1 = "SELECT COUNT(*)+100 FROM orders"
-    val q2 = "WITH t1 AS (SELECT COUNT(*) as mycount from products) SELECT mycount/100 FROM t1"
-    val q3 = "WITH t1 AS (SELECT product_id, COUNT(*) as mycount from orders GROUP BY 1) SELECT AVG(mycount) FROM t1"
-    List(q1, q2, q3).foreach { assertException(_, classOf[UnsupportedQueryException]) }
+    val q2 = "SELECT COUNT(cnt) FROM (SELECT COUNT(*) as cnt FROM orders)"
+    val q3 = "WITH t1 AS (SELECT COUNT(*) as mycount from products) SELECT mycount/100 FROM t1"
+    val q4 = "WITH t1 AS (SELECT product_id, AVG(quantity) as avg_quantity from orders GROUP BY 1) SELECT COUNT(avg_quantity) FROM t1"
+    List(q1, q2, q3, q4).foreach { assertException(_, classOf[ArithmeticOnAggregationResultException]) }
+
+    // don't throw error if arithmetic is applied in ways that don't affect the output column values
+    val q5 = """
+      WITH t1 AS (SELECT order_date, COUNT(*)+1 as num_orders_plus_one FROM orders GROUP BY 1)
+      SELECT COUNT(order_date) FROM t1 WHERE num_orders_plus_one < 10
+    """
+    validateSensitivity(q5, 0, 1.0)
   }
 
   def testNonEquijoin() = {
@@ -295,5 +303,4 @@ class ElasticSensitivityAnalysisTest extends TestCase {
 
     List(q1, q2, q3).foreach { assertException(_, classOf[MissingMetricException]) }
   }
-
 }

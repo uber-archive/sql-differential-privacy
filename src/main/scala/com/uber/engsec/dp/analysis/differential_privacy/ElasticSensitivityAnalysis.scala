@@ -25,11 +25,11 @@ package com.uber.engsec.dp.analysis.differential_privacy
 import com.uber.engsec.dp.analysis.histogram.{HistogramAnalysis, QueryType}
 import com.uber.engsec.dp.dataflow.AggFunctions._
 import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
-import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.dataflow.column.RelColumnAnalysis
-import com.uber.engsec.dp.dataflow.domain.AbstractDomain
-import com.uber.engsec.dp.sql.relational_algebra._
 import com.uber.engsec.dp.exception.{UnsupportedConstructException, UnsupportedQueryException}
+import com.uber.engsec.dp.schema.Schema
+import com.uber.engsec.dp.sql.relational_algebra._
+import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Aggregate, Join, Project, TableScan}
 import org.apache.calcite.rex.{RexCall, RexLiteral, RexNode}
 import org.apache.calcite.sql.SqlKind
@@ -55,7 +55,17 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
         histogramResults.filter{ _.isAggregation }.exists{ _.outermostAggregation.get != COUNT })
       throw new UnsupportedQueryException("This analysis currently works only on statistical and histogram counting queries")
 
-    super.run(root)
+    val results = super.run(root)
+
+    // Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
+    // (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently model.
+    val idx = results.indexWhere{ _.postAggregationArithmeticApplied }
+    if (idx != -1) {
+      val colName = root.unwrap.asInstanceOf[RelNode].getRowType.getFieldNames.get(idx)
+      throw new ArithmeticOnAggregationResultException(colName)
+    }
+
+    results
   }
 
   /** Set the distance ''k'' from the true database for the elastic sensitivity calculation
@@ -65,15 +75,6 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
   def setK(k: Int): Unit = this.k = k
 
   import scala.collection.JavaConverters._
-
-  /** Checks that no operations are applied to post-aggregated results; this check is not needed for soundness of
-    * the analysis but allows us to print a helpful error message rather than returning a sensitivity of infinity
-    * without explanation.
-    */
-  def validateSensitivity(node: RelOrExpr, state: SensitivityInfo): Unit = {
-    if (state.aggregationApplied && state.sensitivity.isDefined)
-      throw new UnsupportedQueryException(s"Illegal arithmetic or function applied to aggregation results; sensitivity cannot be determined (at ${node.toString})")
-  }
 
   override def transferAggregate(node: Aggregate, idx: Int, aggFunction: Option[AggFunction], state: SensitivityInfo): SensitivityInfo = {
     aggFunction match {
@@ -87,13 +88,12 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
         state.copy(sensitivity=Some(0.0))
 
       case Some(COUNT) =>
-        validateSensitivity(node, state)
-
         // The sensitivity of count() is the stability of the target node (stored in the current column fact)
         state.copy(
           sensitivity=Some(state.stability),
           maxFreq=Double.PositiveInfinity,
           aggregationApplied=true,
+          postAggregationArithmeticApplied=state.aggregationApplied,
           isUnique=false,
           canRelease=false
         )
@@ -104,6 +104,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           stability=Double.PositiveInfinity,
           maxFreq=Double.PositiveInfinity,
           aggregationApplied=true,
+          postAggregationArithmeticApplied=state.aggregationApplied,
           isUnique=false,
           canRelease=false
         )
@@ -143,6 +144,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
       isUnique=isUnique,
       optimizationUsed=false,
       aggregationApplied=false,
+      postAggregationArithmeticApplied=false,
       canRelease=canRelease,
       ancestors=Set(tableName)
     )
@@ -151,14 +153,12 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
   override def transferExpression(node: RexNode, state: SensitivityInfo): SensitivityInfo = {
     node match {
       case c: RexCall =>
-        if (c.getOperator.getKind != SqlKind.EQUALS)
-          validateSensitivity(node, state)
-
         // We could model standard SQL functions here but for this implementation we treat every function conservatively.
         state.copy(
           sensitivity = Some(Double.PositiveInfinity),
           maxFreq = Double.PositiveInfinity,
-          isUnique = false
+          isUnique = false,
+          postAggregationArithmeticApplied = state.aggregationApplied && !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind)
         )
       case _ =>
         // conservatively handle all other expression nodes, which could arbitrarily alter column values such that
@@ -272,4 +272,12 @@ class ProtectedBinException(binName: String) extends UnsupportedQueryException(
     "The bin labels must be made differentially private, which requires additional data model knowledge. " +
     "If you know what you're doing, you can disable this message by setting canRelease=true for columns of protected " +
     " tables that are safe for release, or setting flag -Ddp.check_bins=false to disable this check entirely."
+)
+
+/** Thrown if operations/functions were applied to post-aggregated values; this check is not needed for soundness of the
+  * analysis but allows us to print a helpful error message rather than returning a sensitivity of infinity with no
+  * explanation.
+  */
+class ArithmeticOnAggregationResultException(colName: String) extends UnsupportedQueryException(
+  s"Arithmetic or function applied to aggregation results; sensitivity cannot be determined (output column '$colName')"
 )

@@ -37,7 +37,9 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
   * @param optimizationUsed Flag to track whether the unique-key or public-table optimization was used on this column
   *                         (for debugging and experiments)
   * @param aggregationApplied Has an aggregation already been applied to this column?
-  *
+  * @param postAggregationArithmeticApplied Was a function/operation applied to post-aggregated result? We track this
+  *                                         only to print a helpful error message since this results in infinite
+  *                                         sensitivity.
   * @param canRelease  Can the values of this column be released without adding noise? This is true for columns
   *                    of public tables and columns in private tables explicitly marked with canRelease=true
   *                    (as well as values derived therefrom). This is used to determine whether histogram bin
@@ -50,16 +52,17 @@ case class SensitivityInfo(sensitivity: Option[Double],
                            isUnique: Boolean,
                            optimizationUsed: Boolean,
                            aggregationApplied: Boolean,
+                           postAggregationArithmeticApplied: Boolean,
                            canRelease: Boolean,
                            ancestors: Set[String]) {
-  override def toString: String = s"sensitivity: $sensitivity, stability: $stability, maxFreq: $maxFreq, isUnique: $isUnique, optimizationUsed: $optimizationUsed, aggregationApplied: $aggregationApplied, canRelease: $canRelease, ancestors: $ancestors"
+  override def toString: String = s"sensitivity: $sensitivity, stability: $stability, maxFreq: $maxFreq, isUnique: $isUnique, optimizationUsed: $optimizationUsed, aggregationApplied: $aggregationApplied, postAggregationArithmeticApplied: $postAggregationArithmeticApplied, canRelease: $canRelease, ancestors: $ancestors"
 }
 
 /** The abstract for elastic sensitivity analysis is a product lattice with pointwise ordering of the element types
   * defined above.
   */
 object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
-  override val bottom: SensitivityInfo = SensitivityInfo(None, 1.0, 0.0, false, false, false, true, Set.empty)
+  override val bottom: SensitivityInfo = SensitivityInfo(None, 1.0, 0.0, false, false, false, false, true, Set.empty)
 
   override def leastUpperBound(first: SensitivityInfo, second: SensitivityInfo): SensitivityInfo = {
     SensitivityInfo(
@@ -69,6 +72,7 @@ object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
       isUnique = first.isUnique && second.isUnique,
       optimizationUsed = first.optimizationUsed || second.optimizationUsed,
       aggregationApplied = first.aggregationApplied || second.aggregationApplied,
+      postAggregationArithmeticApplied = first.postAggregationArithmeticApplied || second.postAggregationArithmeticApplied,
       canRelease = first.canRelease && second.canRelease,
       ancestors = first.ancestors ++ second.ancestors
     )
