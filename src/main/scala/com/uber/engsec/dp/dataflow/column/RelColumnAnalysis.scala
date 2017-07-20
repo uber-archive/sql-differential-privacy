@@ -27,7 +27,7 @@ import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.relational_algebra._
-import org.apache.calcite.rel.core.{Aggregate, Filter, Project, TableScan, Join => RelJoin}
+import org.apache.calcite.rel.core.{Aggregate, Filter, Project, Sort, TableScan, Join}
 import org.apache.calcite.rel.{BiRel, RelNode, SingleRel}
 import org.apache.calcite.rex.{RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlKind
@@ -53,11 +53,14 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
           case t: TableScan =>
             state.zipWithIndex.map { case (fact, idx) => transferTableScan(t, idx, fact) }
 
-          case j: RelJoin =>
+          case j: Join =>
             state.zipWithIndex.map { case (fact, idx) => transferJoin(j, idx, fact) }
 
           case f: Filter =>
             state.zipWithIndex.map { case (fact, idx) => transferFilter(f, idx, fact) }
+
+          case s: Sort =>
+            state.zipWithIndex.map { case (fact, idx) => transferSort(s, idx, fact) }
 
           case a: Aggregate =>
             state.zipWithIndex.map { case (fact, idx) =>
@@ -146,7 +149,10 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
       case Relation(f: Filter) =>
         resultMap(Relation(f.getInput))
 
-      case Relation(j: RelJoin) =>
+      case Relation(s: Sort) =>
+        resultMap(Relation(s.getInput))
+
+      case Relation(j: Join) =>
         resultMap(j.getLeft) ++ resultMap(j.getRight)
 
       case Expression(i: RexInputRef) =>
@@ -168,7 +174,7 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
 
       case Expression(_) => flattenJoinChildren(domain, node, children)
 
-      case Relation(r) => throw new RuntimeException(s"Unhandled relation node type: ${node.getClass}")
+      case Relation(r) => throw new RuntimeException(s"Unhandled relation node type: ${node.unwrap.getClass}")
     }
   }
 
@@ -209,8 +215,9 @@ trait RelColumnAnalysisFunctions[E] {
   /** If aggFunction is None, the current column is a grouped column. */
   def transferAggregate(node: Aggregate, idx: Int, aggFunction: Option[AggFunction], state: E): E = state
   def transferTableScan(node: TableScan, idx: Int, state: E): E = state
-  def transferJoin(node: RelJoin, idx: Int, state: E): E = state
+  def transferJoin(node: Join, idx: Int, state: E): E = state
   def transferFilter(node: Filter, idx: Int, state: E): E = state
+  def transferSort(node: Sort, idx: Int, state: E): E = state
   def transferProject(node: Project, idx: Int, state: E): E = state
   def transferExpression(node: RexNode, state: E): E = state
 }

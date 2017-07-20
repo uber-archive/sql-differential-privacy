@@ -30,7 +30,8 @@ import com.uber.engsec.dp.sql.dataflow_graph.{Node => DFGNode}
 import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, Relation}
 import com.uber.engsec.dp.util.IdentityHashMap
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.{Aggregate, Filter, Project, TableScan, Join => RelJoin}
+import org.apache.calcite.rel.core.{Aggregate, Filter, Project, Sort, TableScan, Join => RelJoin}
+import org.apache.calcite.rel.logical.LogicalSort
 import org.apache.calcite.rex._
 
 import scala.collection.{MapLike, mutable}
@@ -113,10 +114,12 @@ object TreePrinter {
               :: Nil)
           case j: RelJoin =>
             ("Join[" + j.getJoinType.toString + "]",
-              LabeledNode(Some("condition"),Expression(j.getCondition))
+              LabeledNode(Some("condition"), Expression(j.getCondition))
               :: LabeledNode(Some("left"), Relation(j.getLeft))
               :: LabeledNode(Some("right"), Relation(j.getRight))
               :: Nil)
+          case s: Sort =>
+            ("Sort[" + s.collation.getFieldCollations.asScala.map{ col => s"${col.getFieldIndex} ${col.direction.shortString}" }.mkString(", ") + "]", List(LabeledNode(Some("input"), Relation(s.getInput))))
           case _ =>
             // ("??? (" + rel.getClass.getSimpleName + ")", rel.getChildExps.asScala.map { x => ("? expr", Expression(x) ) } ++ rel.getInputs.asScala.map { x => ("? rel", Relation(x) ) })
             throw new RuntimeException(s"Unrecognized relational node type: ${rel.getClass.toString})")
