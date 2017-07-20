@@ -170,6 +170,9 @@ object TreePrinter {
 
 class TreePrinter[T <: AnyRef] {
 
+  /* Truncate node strings longer than this for easier readability */
+  val MAX_NODE_STRING_LENGTH = 40
+
   var maxIndent = 0
   var nodeNum = 0
   val nodeMap = new IdentityHashMap[T, PrintedNode[T]]()
@@ -197,7 +200,13 @@ class TreePrinter[T <: AnyRef] {
       val isTail = alreadyPrinted || nodeInfo.isTail
 
       // Generate the node print string
-      val nodePrintStr = if (alreadyPrinted) "..." else nodeInfo.printStr
+      val nodePrintStr =
+        if (alreadyPrinted)
+          "..."
+        else if (nodeInfo.printStr.length < MAX_NODE_STRING_LENGTH)
+          nodeInfo.printStr
+        else
+          nodeInfo.printStr.substring(0, MAX_NODE_STRING_LENGTH) + " ..."
 
       // Generate the "state" print string
       val statePrintStr =
@@ -274,7 +283,7 @@ class TreePrinter[T <: AnyRef] {
 
       val (nodeStr: String, namedChildren: Seq[LabeledNode[T]]) = nodePrintInfo(node)
 
-      maxIndent = math.max(maxIndent, 5*depth + nodeStr.length)
+      maxIndent = math.max(maxIndent, 5*depth + math.min(nodeStr.length, MAX_NODE_STRING_LENGTH+4))
       val lastIdx = namedChildren.length - 1
       nodeMap += (node -> new PrintedNode[T](nodeStr, nodeNum, isTail, namedChildren))
       nodeNum = nodeNum + 1
