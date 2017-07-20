@@ -27,7 +27,26 @@ import org.apache.calcite.rex.RexNode
 
 /** Wrapper for union type RelNode | RexNode, the root node type for relational algebra trees.
   */
-sealed abstract class RelOrExpr
+sealed abstract class RelOrExpr extends Traversable[RelOrExpr] {
+
+  /** Implementing the foreach method from Traversable gives access to many useful higher-order functions on relational
+    * algebra trees fold*, reduce*, exists, collect, etc.
+    */
+  override def foreach[U](f: RelOrExpr => U) = {
+    f(this)
+    RelTreeFunctions.getChildren(this).foreach { _.foreach(f) }
+  }
+
+  /** Optimized version of some traversable methods.
+    */
+  override def isEmpty: Boolean = false
+  override def head: RelOrExpr = this
+  // tail is inherited from TraversableLike (and implemented using foreach)
+
+  /** Returns the underlying node element.
+    */
+  def unwrap: AnyRef
+}
 
 case class Relation(node: RelNode) extends RelOrExpr {
   override def hashCode: Int = System.identityHashCode(node)
@@ -35,6 +54,8 @@ case class Relation(node: RelNode) extends RelOrExpr {
     case other: Relation => other.node eq node
     case _ => false
   }
+  override def unwrap: RelNode = node
+  override def toString: String = node.toString
 }
 
 case class Expression(node: RexNode) extends RelOrExpr {
@@ -43,6 +64,8 @@ case class Expression(node: RexNode) extends RelOrExpr {
     case other: Expression => other.node eq node
     case _ => false
   }
+  override def unwrap: RexNode = node
+  override def toString: String = node.toString
 }
 
 // Conversions to and from RelOrExpr

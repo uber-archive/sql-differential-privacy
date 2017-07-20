@@ -32,22 +32,27 @@ import scala.collection.JavaConverters._
   */
 trait RelTreeFunctions extends TreeFunctions[RelOrExpr] {
   this: AbstractAnalysis[RelOrExpr, _] =>
-  override def getNodeChildren(node: RelOrExpr): Iterable[RelOrExpr] = node match {
-    case Relation(p: Project) =>  Relation(p.getInput) :: p.getProjects.asScala.map{Expression}.toList
-    case Relation(a: Aggregate) => List(a.getInput)
-    case Relation(t: TableScan) => Nil
-    case Relation(j: Join) => j.getInputs.asScala.map{Relation} ++ List(Expression(j.getCondition))
-    case Relation(f: Filter) => Relation(f.getInput) :: Expression(f.getCondition) :: Nil
-    case Expression(c: RexCall) => c.operands.asScala
-    case Expression(i: RexInputRef) => Nil
-    case Expression(l: RexLiteral) => Nil
-    case Expression(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
-    case Relation(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
-  }
+  override def getNodeChildren(node: RelOrExpr): Iterable[RelOrExpr] = RelTreeFunctions.getChildren(node)
 
   override def parseQueryToTree(query: String): RelOrExpr = {
     QueryParser.parseToRelTree(query)
   }
 
   override def printTree(node: RelOrExpr): Unit = TreePrinter.printRelTree(node, resultMap, currentNode)
+}
+
+object RelTreeFunctions {
+  def getChildren(node: RelOrExpr): Iterable[RelOrExpr] = node match {
+    case Relation(p: Project) =>  Relation(p.getInput) :: p.getProjects.asScala.map{Expression}.toList
+    case Relation(a: Aggregate) => List(a.getInput)
+    case Relation(t: TableScan) => Nil
+    case Relation(j: Join) => j.getInputs.asScala.map{Relation} ++ List(Expression(j.getCondition))
+    case Relation(f: Filter) => Relation(f.getInput) :: Expression(f.getCondition) :: Nil
+    case Relation(s: Sort) => (Relation(s.getInput) :: Expression(s.fetch) :: Expression(s.offset) :: Nil).filter{ _.unwrap != null }
+    case Expression(c: RexCall) => c.operands.asScala
+    case Expression(i: RexInputRef) => Nil
+    case Expression(l: RexLiteral) => Nil
+    case Expression(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
+    case Relation(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
+  }
 }
