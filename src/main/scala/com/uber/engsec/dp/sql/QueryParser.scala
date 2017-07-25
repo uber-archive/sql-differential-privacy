@@ -22,21 +22,12 @@
 
 package com.uber.engsec.dp.sql
 
-import java.util.Properties
-
 import com.facebook.presto.sql.parser.{SqlParser => PrestoSqlParser}
 import com.facebook.presto.sql.tree.{Query, Statement}
-import com.uber.engsec.dp.schema.{CalciteSchemaFromConfig, Schema}
-import com.uber.engsec.dp.sql.relational_algebra.RelOrExpr
 import com.uber.engsec.dp.exception.ParsingException
-import com.uber.engsec.dp.sql.ast.Transformer
+import com.uber.engsec.dp.sql.ast.{Transformer => ASTTransformer}
 import com.uber.engsec.dp.sql.dataflow_graph.Node
-import org.apache.calcite.avatica.util.{Casing, Quoting}
-import org.apache.calcite.config.{CalciteConnectionConfig, CalciteConnectionConfigImpl}
-import org.apache.calcite.plan.Context
-import org.apache.calcite.sql.parser.SqlParser
-import org.apache.calcite.sql.validate.SqlConformanceEnum
-import org.apache.calcite.tools.Frameworks
+import com.uber.engsec.dp.sql.relational_algebra.{Relation, Transformer => RelTransformer}
 
 /** Utility class for parsing SQL queries into different representations.
   */
@@ -77,7 +68,7 @@ object QueryParser {
     printQuery(query, "dataflow graph")
 
     val prestoRoot: Statement = parseToPrestoTree(query)
-    val transform = new Transformer
+    val transform = new ASTTransformer
     transform.convertToDataflowGraph(prestoRoot)
   }
 
@@ -85,45 +76,11 @@ object QueryParser {
     * @param query The SQL query to be parsed
     * @return The relational algebra tree root node
     */
-  def parseToRelTree(query: String): RelOrExpr = {
+  def parseToRelTree(query: String): Relation = {
     printQuery(query, "relational algebra tree")
 
-    val schema = new CalciteSchemaFromConfig
-    val planner = {
-      val parserConfig = SqlParser.configBuilder
-        .setQuoting(Quoting.DOUBLE_QUOTE)
-        .setConformance(SqlConformanceEnum.LENIENT)
-        .setUnquotedCasing(Casing.UNCHANGED)
-        .setQuotedCasing(Casing.UNCHANGED)
-        .setCaseSensitive(false)
-        .build
-
-      val rootSchema = Frameworks.createRootSchema(true)
-
-      val conformanceProperties = new Properties()
-      conformanceProperties.setProperty("conformance", "LENIENT")
-
-      val config = Frameworks.newConfigBuilder
-        .defaultSchema(rootSchema.add(Schema.currentDb.namespace, schema))
-        .parserConfig(parserConfig)
-        .context(new Context() {
-          override def unwrap[C](aClass: Class[C]): C = {
-            if (aClass.isAssignableFrom(classOf[CalciteConnectionConfig]))
-              new CalciteConnectionConfigImpl(conformanceProperties).asInstanceOf[C]
-            else
-              null.asInstanceOf[C] // ugly but required to return null from Java generic method
-          }
-          })
-        .build
-
-      val planner = Frameworks.getPlanner(config)
-      planner
-    }
-
-    val parse = planner.parse(query)
-    val validate = planner.validate(parse)
-    val rel = planner.rel(validate)
-
-    rel.rel
+    val transformer = RelTransformer.create
+    val root = transformer.convertToRelTree(query)
+    Relation(root)
   }
 }
