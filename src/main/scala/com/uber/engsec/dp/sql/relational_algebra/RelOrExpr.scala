@@ -32,7 +32,7 @@ sealed abstract class RelOrExpr extends Traversable[RelOrExpr] {
   /** Implementing the foreach method from Traversable gives access to many useful higher-order functions on relational
     * algebra trees fold*, reduce*, exists, collect, etc.
     */
-  override def foreach[U](f: RelOrExpr => U) = {
+  override def foreach[U](f: RelOrExpr => U): Unit = {
     f(this)
     RelTreeFunctions.getChildren(this).foreach { _.foreach(f) }
   }
@@ -41,7 +41,7 @@ sealed abstract class RelOrExpr extends Traversable[RelOrExpr] {
     */
   override def isEmpty: Boolean = false
   override def head: RelOrExpr = this
-  // tail is inherited from TraversableLike (and implemented using foreach)
+  // tail is inherited from TraversableLike
 
   /** Returns the underlying node element.
     */
@@ -68,7 +68,7 @@ case class Expression(node: RexNode) extends RelOrExpr {
   override def toString: String = node.toString
 }
 
-// Conversions to and from RelOrExpr
+/** Conversions to and from RelOrExpr */
 object RelOrExpr {
   import scala.language.implicitConversions
   implicit def rel2Sum(node: RelNode): RelOrExpr = Relation(node)

@@ -171,7 +171,7 @@ object TreePrinter {
 class TreePrinter[T <: AnyRef] {
 
   /* Truncate node strings longer than this for easier readability */
-  val MAX_NODE_STRING_LENGTH = 40
+  val MAX_NODE_STRING_LENGTH = 64
 
   var maxIndent = 0
   var nodeNum = 0
