@@ -76,13 +76,14 @@ class ElasticSensitivityAnalysisTest extends TestCase {
 
   def testSimpleCount() {
     // Some simple counting queries using various SQL constructs (without join). Sensitivity should be 1.0 for each.
-    val q1 = "SELECT COUNT(*) FROM orders WHERE product_id = 1"
-    val q2 = "SELECT COUNT(order_id) FROM orders"
-    val q3 = "WITH t1 AS (SELECT * FROM orders) SELECT COUNT(*) FROM t1"
-    val q4 = "WITH t1 AS (SELECT COUNT(*) FROM orders) SELECT * FROM t1"
-    val q5 = "SELECT COUNT(ROUND(order_date, 1)) FROM orders"
-    val q6 = "SELECT COUNT(DISTINCT order_id) FROM orders"
-    List(q1, q2, q3, q4, q5).foreach { validateSensitivity(_, 0, 1.0) }
+    List(
+      "SELECT COUNT(*) FROM orders WHERE product_id = 1",
+      "SELECT COUNT(order_id) FROM orders",
+      "WITH t1 AS (SELECT * FROM orders) SELECT COUNT(*) FROM t1",
+      "WITH t1 AS (SELECT COUNT(*) FROM orders) SELECT * FROM t1",
+      "SELECT COUNT(ROUND(order_date, 1)) FROM orders",
+      "SELECT COUNT(DISTINCT order_id) FROM orders"
+    ).foreach { validateSensitivity(_, 0, 1.0) }
   }
 
   def testSimpleHistogram() {
@@ -91,10 +92,11 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   }
 
   def testHistogramProtectedBin() {
-    val q1 = "SELECT customer_id, COUNT(*) FROM orders GROUP BY 1"
-    val q2 = "SELECT order_date+customer_id, COUNT(*) FROM orders GROUP BY 1"
-    val q3 = "SELECT CASE WHEN customer_id = 0 THEN 0 else 1 END, COUNT(*) FROM orders GROUP BY 1"
-    List(q1, q2, q3).foreach { assertException(_, classOf[ProtectedBinException]) }
+    List(
+      "SELECT customer_id, COUNT(*) FROM orders GROUP BY 1",
+      "SELECT order_date+customer_id, COUNT(*) FROM orders GROUP BY 1",
+      "SELECT CASE WHEN customer_id = 0 THEN 0 else 1 END, COUNT(*) FROM orders GROUP BY 1"
+    ).foreach { assertException(_, classOf[ProtectedBinException]) }
   }
 
   def testEqualityCheckOnAggregation() = {
@@ -115,6 +117,54 @@ class ElasticSensitivityAnalysisTest extends TestCase {
     validateSensitivity(query, 2, 252.0)
   }
 
+  def testFilterPushdown() = {
+    // ensure the analysis can handle filter conditions in the WHERE clause of a cross-join relation, which is
+    // semantically equivalent to an equijoin. We ensure this case is supported because it occurs fairly often in SQL
+    // queries.
+
+    /** Positive test cases */
+    List(
+      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id",
+      // ensure we can decompose the equijoin condition from the remaining conjunctive clauses
+      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id AND orders.customer_id != 1"
+    ).foreach { validateSensitivity(_, 0, 1.0) }
+
+    /** Negative test cases */
+    List(
+      // not equijoin condition (two columns from the same relation)
+      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = orders.customer_id",
+      // a disjunction in the filter cannot be transformed into an equijoin
+      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id OR orders.customer_id != 1"
+    ).foreach { assertException(_, classOf[UnsupportedConstructException]) }
+  }
+
+  def testConjuctiveJoinPredicate() = {
+    // elastic sensitivity can handle join predicates that are conjunctions, as long as at least one of the clauses is
+    // an equijoin (since the remaining clauses can only decrease, never increase, the stability of the joined node)
+    /** Positive test cases */
+    List(
+      // simple case
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = customers.customer_id AND customers.customer_id > 10",
+      // order of clauses shouldn't matter
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id > 10 AND customers.customer_id = orders.customer_id",
+      // only top-level predicates need to be conjunctive
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = customers.customer_id AND (orders.product_id = 1 OR customers.customer_id = 1)",
+      // conjunctive clauses might be nested in the parse tree. Analysis needs to flatten this predicate to find the equijoin condition
+      "SELECT COUNT(*) FROM orders JOIN customers ON (orders.product_id = 1 AND (customers.customer_id = 1 AND (orders.customer_id = customers.customer_id)))",
+      // if more than one clause is equijoin, analysis should choose the one that results in lower sensitivity (regardless of the order of clauses)
+      "SELECT COUNT(*) FROM orders JOIN customers ON (orders.customer_id = customers.customer_id) AND (orders.product_id = customers.address)",
+      "SELECT COUNT(*) FROM orders JOIN customers ON (orders.product_id = customers.address) AND (orders.customer_id = customers.customer_id)"
+    ).foreach { validateSensitivity(_, 0, 1.0) }
+
+    /** Negative test cases */
+    List(
+      // non equijoin condition
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = 1 AND customers.customer_id = 1",
+      // disjunction
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = orders.customer_id OR orders.customer_id > 10"
+    ).foreach { assertException(_, classOf[UnsupportedConstructException]) }
+  }
+
   def testHistogramWithJoin() {
     // maxFreqs:
     //   orders.customer_id = 100
@@ -127,32 +177,6 @@ class ElasticSensitivityAnalysisTest extends TestCase {
     """
     validateSensitivity(query, 0, 0.0, 250.0)
     validateSensitivity(query, 10, 0.0, 260.0)
-  }
-
-  def testUniquenessOptimization() {
-    // maxFreqs:
-    //   orders.customer_id = 100
-    //   customers.customer_id [unique=true]
-    val query = """
-      SELECT COUNT(*)
-      FROM orders JOIN customers ON orders.customer_id = customers.customer_id
-      WHERE product_id = 1
-    """
-    // with uniqueness optimization, sensitivity is 1.0
-    validateSensitivity(query, 0, 1.0)
-  }
-
-  def testPublicTableOptimization() {
-    // maxFreqs:
-    //   orders.product_id = 500
-    //   products [public=true]
-    val query = """
-      SELECT COUNT(*)
-      FROM orders JOIN products ON orders.product_id = products.product_id
-      WHERE orders.product_id = 1
-    """
-    validateSensitivity(query, 0, 500.0)
-    validateSensitivity(query, 25, 525.0)
   }
 
   def testCompoundJoin() {
@@ -254,29 +278,53 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   }
 
   def testArithmeticOnResult() = {
-    val q1 = "SELECT COUNT(*)+100 FROM orders"
-    val q2 = "SELECT COUNT(cnt) FROM (SELECT COUNT(*) as cnt FROM orders)"
-    val q3 = "WITH t1 AS (SELECT COUNT(*) as mycount from products) SELECT mycount/100 FROM t1"
-    val q4 = "WITH t1 AS (SELECT product_id, AVG(quantity) as avg_quantity from orders GROUP BY 1) SELECT COUNT(avg_quantity) FROM t1"
-    List(q1, q2, q3, q4).foreach { assertException(_, classOf[ArithmeticOnAggregationResultException]) }
+    List(
+      "SELECT COUNT(*)+100 FROM orders",
+      "WITH t1 AS (SELECT COUNT(*) as mycount from products) SELECT mycount/100 FROM t1",
+      "WITH t1 AS (SELECT product_id, AVG(quantity) as avg_quantity from orders GROUP BY 1) SELECT COUNT(avg_quantity) FROM t1"
+    ).foreach { assertException(_, classOf[ArithmeticOnAggregationResultException]) }
 
     // don't throw error if arithmetic is applied in ways that don't affect the output column values
-    val q5 = """
+    val query = """
       WITH t1 AS (SELECT order_date, COUNT(*)+1 as num_orders_plus_one FROM orders GROUP BY 1)
       SELECT COUNT(order_date) FROM t1 WHERE num_orders_plus_one < 10
     """
-    validateSensitivity(q5, 0, 1.0)
+    validateSensitivity(query, 0, 1.0)
   }
 
   def testNonEquijoin() = {
-    // Elastic sensitivity supports equijoins on direct column values. This test verifies that the analysis correctly
-    // rejects unsupported join types and conditions.
-    val q1 = "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id < customers.customer_id"
-    val q2 = "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id = 1"
-    val q3 = "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id = orders.customer_id"
-    val q4 = "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id"
-    val q5 = "SELECT COUNT(*) FROM orders, customers"
-    List(q1, q2, q3, q4, q5).foreach { assertException(_, classOf[UnsupportedConstructException]) }
+    List(
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id < customers.customer_id",
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id = 1",
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id = orders.customer_id",
+      "SELECT COUNT(*) FROM orders, customers"
+    ).foreach { assertException(_, classOf[UnsupportedConstructException]) }
+  }
+
+  def testUniquenessOptimization() {
+    // maxFreqs:
+    //   orders.customer_id = 100
+    //   customers.customer_id [unique=true]
+    val query = """
+      SELECT COUNT(*)
+      FROM orders JOIN customers ON orders.customer_id = customers.customer_id
+      WHERE product_id = 1
+    """
+    // with uniqueness optimization, sensitivity is 1.0
+    validateSensitivity(query, 0, 1.0)
+  }
+
+  def testPublicTableOptimization() {
+    // maxFreqs:
+    //   orders.product_id = 500
+    //   products [public=true]
+    val query = """
+      SELECT COUNT(*)
+      FROM orders JOIN products ON orders.product_id = products.product_id
+      WHERE orders.product_id = 1
+    """
+    validateSensitivity(query, 0, 500.0)
+    validateSensitivity(query, 25, 525.0)
   }
 
   def testMissingMetric() = {
@@ -288,19 +336,16 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   def testDerivedJoinKey() = {
     // These queries join on an altered column values, which means the metrics are not applicable and therefore
     // the query should be rejected.
-    val q1 = """
+    List("""
       WITH t1 AS (SELECT ROUND(customer_id, 1) as customer_id FROM customers)
       SELECT COUNT(*) FROM recommendations JOIN t1 ON recommendations.customer_id = t1.customer_id
-    """
-    val q2 = """
+    """, """
       WITH t1 AS (SELECT customer_id+1 as customer_id FROM customers)
       SELECT COUNT(*) FROM recommendations JOIN t1 ON recommendations.customer_id = t1.customer_id
-    """
-    val q3 = """
+    """, """
       WITH _orders AS (SELECT COUNT(*) as product_id FROM orders)
       SELECT COUNT(*) from _orders JOIN products ON _orders.product_id = products.product_id
     """
-
-    List(q1, q2, q3).foreach { assertException(_, classOf[MissingMetricException]) }
+    ).foreach { assertException(_, classOf[MissingMetricException]) }
   }
 }

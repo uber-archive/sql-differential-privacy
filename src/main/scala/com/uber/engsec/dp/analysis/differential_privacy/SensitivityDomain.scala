@@ -28,7 +28,7 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
   *
   * @param sensitivity Elastic sensitivity for this column. Always an upper bound of local sensitivity.
   *                    This is a floating point lattice with bottom (undefined sensitivity) represented by Option.None,
-  *                    top (unbounded sensitivity) represented by Some(Infinity), and partial order defined by the max.
+  *                    top (unbounded sensitivity) represented by Some(Infinity), and partial order defined by max.
   * @param stability Stability of the *node*. All columns in each node are guaranteed to have the same stability,
   *                  which is stored as a column fact to simplify analysis implementation. The lattice is defined by the
   *                  natural ordering.
@@ -62,9 +62,19 @@ case class SensitivityInfo(sensitivity: Option[Double],
   * defined above.
   */
 object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
-  override val bottom: SensitivityInfo = SensitivityInfo(None, 1.0, 0.0, false, false, false, false, true, Set.empty)
+  override val bottom: SensitivityInfo =
+    SensitivityInfo(
+      sensitivity = None,
+      stability = 1.0,
+      maxFreq = 0.0,
+      isUnique = false,
+      optimizationUsed = false,
+      aggregationApplied = false,
+      postAggregationArithmeticApplied = false,
+      canRelease = true,
+      ancestors = Set.empty)
 
-  override def leastUpperBound(first: SensitivityInfo, second: SensitivityInfo): SensitivityInfo = {
+  override def leastUpperBound(first: SensitivityInfo, second: SensitivityInfo): SensitivityInfo =
     SensitivityInfo(
       sensitivity = (first.sensitivity ++ second.sensitivity).reduceLeftOption(math.max),
       stability = math.max(first.stability, second.stability),
@@ -74,7 +84,5 @@ object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
       aggregationApplied = first.aggregationApplied || second.aggregationApplied,
       postAggregationArithmeticApplied = first.postAggregationArithmeticApplied || second.postAggregationArithmeticApplied,
       canRelease = first.canRelease && second.canRelease,
-      ancestors = first.ancestors ++ second.ancestors
-    )
-  }
+      ancestors = first.ancestors ++ second.ancestors)
 }

@@ -29,7 +29,7 @@ import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.Join
 import org.apache.calcite.rel.externalize.RelJsonWriter
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter
-import org.apache.calcite.rex.{RexCall, RexInputRef}
+import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlDialect.DatabaseProduct
 import org.apache.calcite.sql.{SqlDialect, SqlKind}
 
@@ -37,8 +37,8 @@ object RelUtils {
   /** Extracts the left and right column indexes, respectively, used in an equijoin condition, or None if
     * the join node uses any other type of join condition (including an empty join condition).
     */
-  def extractEquiJoinColumns(node: Join): Option[(Int,Int)] = {
-    node.getCondition match {
+  def extractEquiJoinColumns(node: Join, condition: RexNode): Option[(Int,Int)] = {
+    condition match {
       case c: RexCall if c.op.kind == SqlKind.EQUALS && c.operands.size == 2 =>
 
         val numColsLeft = node.getLeft.getRowType.getFieldCount
@@ -59,6 +59,19 @@ object RelUtils {
         }
 
       case _ => None
+    }
+  }
+
+  /** Decomposes a given expression into a list of conjunctive clauses. */
+  def decomposeConjunction(expression: RexNode): List[RexNode] = {
+    import scala.collection.JavaConverters._
+
+    if (expression == null || expression.isAlwaysTrue)
+      Nil
+
+    expression match {
+      case c: RexCall if c.isA(SqlKind.AND) => c.getOperands.asScala.flatMap{ decomposeConjunction }.toList
+      case _ => List(expression)
     }
   }
 

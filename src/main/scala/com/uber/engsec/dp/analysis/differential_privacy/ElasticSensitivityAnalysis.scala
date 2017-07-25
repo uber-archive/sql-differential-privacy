@@ -59,7 +59,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
 
     // Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
     // (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently model.
-    val idx = results.indexWhere{ _.postAggregationArithmeticApplied }
+    val idx = results.indexWhere{ col => col.sensitivity.contains(Double.PositiveInfinity) && col.postAggregationArithmeticApplied }
     if (idx != -1) {
       val colName = root.unwrap.asInstanceOf[RelNode].getRowType.getFieldNames.get(idx)
       throw new ArithmeticOnAggregationResultException(colName)
@@ -95,8 +95,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           aggregationApplied=true,
           postAggregationArithmeticApplied=state.aggregationApplied,
           isUnique=false,
-          canRelease=false
-        )
+          canRelease=false)
 
       case _ => // other aggregation functions -> return Top (conservative)
         state.copy(
@@ -106,8 +105,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           aggregationApplied=true,
           postAggregationArithmeticApplied=state.aggregationApplied,
           isUnique=false,
-          canRelease=false
-        )
+          canRelease=false)
     }
   }
 
@@ -146,8 +144,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
       aggregationApplied=false,
       postAggregationArithmeticApplied=false,
       canRelease=canRelease,
-      ancestors=Set(tableName)
-    )
+      ancestors=Set(tableName))
   }
 
   override def transferExpression(node: RexNode, state: SensitivityInfo): SensitivityInfo = {
@@ -158,15 +155,13 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           sensitivity = Some(Double.PositiveInfinity),
           maxFreq = Double.PositiveInfinity,
           isUnique = false,
-          postAggregationArithmeticApplied = state.aggregationApplied && !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind)
-        )
+          postAggregationArithmeticApplied = state.aggregationApplied && !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind))
       case _ =>
         // conservatively handle all other expression nodes, which could arbitrarily alter column values such that
         // current metrics are invalidated (e.g., in the case of arithmetic expressions).
         state.copy(
           maxFreq = Double.PositiveInfinity,
-          isUnique = false
-        )
+          isUnique = false)
     }
   }
 
@@ -175,82 +170,97 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
       case Relation(j: Join) =>
         // Stability must be updated at every Join node in the query.
 
-        val (leftColumnIndex, rightColumnIndex) =
-          RelUtils.extractEquiJoinColumns(j)
-                  .getOrElse(throw new UnsupportedConstructException(s"This analysis only works on equijoins. Can't support join condition: ${j.getCondition.toString}"))
+        /*
+           If the join has more than one AND-ed equijoin condition (e.g., SELECT a JOIN b ON a.x = b.x AND a.y = b.y) we
+           evaluate each one individually and select the most restrictive, i.e., the one producing the lowest stability.
+           This is sound because conjunction predicates may only decrease the stability of the join by adding
+           additional constraints, so computing the stability using any single clause will still produce an upper-bound
+           on the true stability. The code will throw an UnsupportedConstructException if the query does not include any
+           equijoin conditions, or uses other types of join predicates (e.g., disjunctions). See test cases for more
+           info.
+         */
+        val conjunctiveClauses = RelUtils.decomposeConjunction(j.getCondition)
+        val equijoinConditions = conjunctiveClauses.flatMap{ clause => RelUtils.extractEquiJoinColumns(j, clause) }
+        if (equijoinConditions.isEmpty)
+          throw new UnsupportedConstructException(s"This analysis only works on equijoins. Can't support join condition: ${j.getCondition.toString}")
 
-        val conditionDomains = resultMap(Expression(j.getCondition))
-        var optimizationUsed = false
+        val newStates = equijoinConditions.map { cols: (Int, Int) =>
 
-        val leftState = resultMap(Relation(j.getLeft))
-        val rightState = resultMap(Relation(j.getRight))
+          val (leftColumnIndex, rightColumnIndex) = cols
+          val conditionDomains = resultMap(Expression(j.getCondition))
+          var optimizationUsed = false
 
-        val leftColFact = leftState(leftColumnIndex)
-        val rightColFact = rightState(rightColumnIndex)
+          val leftState = resultMap(Relation(j.getLeft))
+          val rightState = resultMap(Relation(j.getRight))
 
-        val maxFreqLeftJoinColumn = leftColFact.maxFreq
-        val maxFreqRightJoinColumn = rightColFact.maxFreq
+          val leftColFact = leftState(leftColumnIndex)
+          val rightColFact = rightState(rightColumnIndex)
 
-        val leftStability = leftColFact.stability
-        val rightStability = rightColFact.stability
+          val maxFreqLeftJoinColumn = leftColFact.maxFreq
+          val maxFreqRightJoinColumn = rightColFact.maxFreq
 
-        var newStaticStability = 0.0
+          val leftStability = leftColFact.stability
+          val rightStability = rightColFact.stability
 
-        // Determine if this is a self-join: get the intersection of ancestors for the left and right relations
-        // If the intersection is not empty, then this is a self-join
-        val allAncestors = leftColFact.ancestors intersect rightColFact.ancestors
-        if (allAncestors.nonEmpty) {
-          // self-join case
-          newStaticStability = maxFreqLeftJoinColumn*rightStability +
-            maxFreqRightJoinColumn*leftStability +
-            rightStability*leftStability
-        } else {
-          // non self-join case
-          newStaticStability = Math.max(leftStability * maxFreqRightJoinColumn, rightStability * maxFreqLeftJoinColumn)
-        }
+          // Determine if this is a self-join: get the intersection of ancestors for the left and right relations
+          // If the intersection is not empty, then this is a self-join
+          val allAncestors = leftColFact.ancestors intersect rightColFact.ancestors
 
-        // Uniqueness optimization.
-        if (leftColFact.isUnique || rightColFact.isUnique) {
-          if (leftColFact.isUnique) {
-            newStaticStability = leftStability
-          } else {
-            newStaticStability = rightStability
-          }
-          optimizationUsed = true
-        }
+          var newStaticStability =
+            if (allAncestors.nonEmpty) {
+              // self-join case
+              maxFreqLeftJoinColumn * rightStability + maxFreqRightJoinColumn * leftStability + rightStability * leftStability
+            } else {
+              // non self-join case
+              Math.max(leftStability * maxFreqRightJoinColumn, rightStability * maxFreqLeftJoinColumn)
+            }
 
-        // Public table optimization.
-        j.getRight match {
-          case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
-            newStaticStability = math.min(newStaticStability, rightStability * maxFreqLeftJoinColumn)
+          // Uniqueness optimization.
+          if (leftColFact.isUnique || rightColFact.isUnique) {
+            if (leftColFact.isUnique) {
+              newStaticStability = leftStability
+            } else {
+              newStaticStability = rightStability
+            }
             optimizationUsed = true
-          case _ => ()
-        }
-
-        j.getLeft match {
-          case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
-            newStaticStability = math.min(newStaticStability, leftStability * maxFreqRightJoinColumn)
-            optimizationUsed = true
-          case _ => ()
-        }
-
-        // Print a helpful error message if metrics are missing (resulting in infinite stability)
-        if (newStaticStability == Double.PositiveInfinity)
-          throw new MissingMetricException()
-
-        List(j.getLeft, j.getRight).flatMap { relation =>
-          val maxFreqOfOtherRelationJoinKey = if (relation eq j.getLeft) maxFreqRightJoinColumn else maxFreqLeftJoinColumn
-          val childState = resultMap(relation)
-
-          childState.map { fact =>
-            fact.copy(
-              optimizationUsed=fact.optimizationUsed || optimizationUsed,
-              stability=newStaticStability,
-              // The max frequency of each column changes by a factor of the max frequency of the join key in the other relation.
-              maxFreq=fact.maxFreq * maxFreqOfOtherRelationJoinKey
-            )
           }
-        }.toIndexedSeq
+
+          // Public table optimization.
+          j.getRight match {
+            case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
+              newStaticStability = math.min(newStaticStability, rightStability * maxFreqLeftJoinColumn)
+              optimizationUsed = true
+            case _ => ()
+          }
+
+          j.getLeft match {
+            case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
+              newStaticStability = math.min(newStaticStability, leftStability * maxFreqRightJoinColumn)
+              optimizationUsed = true
+            case _ => ()
+          }
+
+          // Print a helpful error message if metrics are missing (resulting in infinite stability)
+          if (newStaticStability == Double.PositiveInfinity)
+            throw new MissingMetricException()
+
+          List(j.getLeft, j.getRight).flatMap { relation =>
+            val maxFreqOfOtherRelationJoinKey = if (relation eq j.getLeft) maxFreqRightJoinColumn else maxFreqLeftJoinColumn
+            val childState = resultMap(relation)
+
+            childState.map { fact =>
+              fact.copy(
+                optimizationUsed = fact.optimizationUsed || optimizationUsed,
+                stability = newStaticStability,
+                // The max frequency of each column changes by a factor of the max frequency of the join key in the other relation.
+                maxFreq = fact.maxFreq * maxFreqOfOtherRelationJoinKey
+              )
+            }
+          }.toIndexedSeq
+
+        }
+
+        newStates.minBy( _.head.stability )
 
       case _ => super.joinNode(node, children)
     }
