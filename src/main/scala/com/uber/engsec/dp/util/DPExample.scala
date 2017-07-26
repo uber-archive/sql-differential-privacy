@@ -25,16 +25,49 @@ package com.uber.engsec.dp.util
 import com.uber.engsec.dp.analysis.differential_privacy.ElasticSensitivityAnalysis
 import com.uber.engsec.dp.sql.QueryParser
 
-/** A simple differential privacy implementation using elastic sensitivity (see DPExample below).
+/** DPExample: A simple differential privacy implementation using elastic sensitivity.
   *
-  * The "addNoise" method works for queries that return a single column and single row. This example can be extended to
-  * queries returning multiple columns and rows by generating independent noise samples for each output cell using the
+  * This example code supports queries that return a single column and single row. The code can be extended to support
+  * queries returning multiple columns and rows by generating independent noise samples for each cell based the
   * appropriate column sensitivity.
   *
-  * Note this example does not implement a privacy budget strategy. Correct application of differential privacy requires
-  * allocation and tracking of a finite privacy budget for a single query and across multiple queries. A privacy budget
-  * strategy depends on the domain-specific use case and threat model and is therefore beyond the scope of this tool.
+  * Caveats:
+  *
+  * Histogram queries (using SQL's GROUP BY) must be handled carefully so as not to leak information in the bin labels.
+  * The analysis throws an error to warn about this, but this behavior can overridden if you know what you're doing.
+  *
+  * This example does not implement a privacy budget management strategy. Each query is executed using the full budget
+  * value of EPSILON. Correct use of differential privacy requires allocating a fixed privacy from which a portion is
+  * depleted to run each query. A privacy budget strategy depends on the problem domain and threat model and is
+  * therefore beyond the scope of this tool.
   */
+object DPExample extends App {
+  // Use the table schemas and metadata defined by the test classes
+  System.setProperty("schema.config.path", "src/test/resources/schema.yaml")
+
+  // example query: How many US customers ordered product #1?
+  val query = """
+    SELECT COUNT(*) FROM orders
+    JOIN customers ON orders.customer_id = customers.customer_id
+    WHERE orders.product_id = 1 AND customers.address LIKE '%United States%'
+  """
+
+  // query result when executed on the database
+  val QUERY_RESULT = 100000
+
+  // privacy budget
+  val EPSILON = 0.1
+
+  println(s"Query: $query")
+  println(s"Private result: $QUERY_RESULT\n")
+
+  (1 to 10).foreach { i =>
+    val noisyResult = DPUtils.addNoise(query, QUERY_RESULT, EPSILON)
+    println(s"Noisy result (run $i): %.0f".format(noisyResult))
+  }
+}
+
+/** Utility methods for the example code. */
 object DPUtils {
   /** Generate Laplace noise centered at 0 with the given scale.
     *
@@ -48,9 +81,9 @@ object DPUtils {
 
   /** Compute the elastic sensitivity of the query at distance k.
     *
-    * Note: if you intend to calculate elastic sensitivity at incremental values of k (e.g., for use with a smoothing
-    * function) you may prefer to use the stream method below, which caches and reuses the query parse tree and is
-    * therefore much more efficient for this purpose.
+    * Note: if you intend to calculate elastic sensitivity for sequential values of k (e.g., to use a smoothing
+    * function) you should use the stream method below, which caches the query parse tree and is therefore much
+    * more efficient.
     *
     * @param query The input query
     * @param k The desired distance from the true database
@@ -77,7 +110,7 @@ object DPUtils {
     Stream.from(0).map{ k =>
       analysis.setK(k)
       val result = analysis.analyzeQuery(tree)
-      assert (result.size == 1)  // this example code works for single-column queries.
+      assert (result.size == 1)  // this example code works for single-column queries. See note above about extending to multi-column queries.
       result.head.sensitivity.get
     }
   }
@@ -116,31 +149,5 @@ object DPUtils {
   def addNoise(query: String, result: Double, epsilon: Double): Double = {
     val sensitivity = smoothSensitivity(query, epsilon)
     result + laplace(sensitivity / epsilon)
-  }
-}
-
-object DPExample extends App {
-  // Use the table schemas and metadata defined by the test classes
-  System.setProperty("schema.config.path", "src/test/resources/schema.yaml")
-
-  // example query: How many US customers ordered product #1?
-  val query = """
-    SELECT COUNT(*) FROM orders
-    JOIN customers ON orders.customer_id = customers.customer_id
-    WHERE orders.product_id = 1 AND customers.address LIKE '%United States%'
-  """
-
-  // query result when executed on the database
-  val QUERY_RESULT = 100000
-
-  // privacy budget
-  val EPSILON = 0.1
-
-  println(s"Query: $query")
-  println(s"Private result: $QUERY_RESULT\n")
-
-  (1 to 10).foreach { i =>
-    val noisyResult = DPUtils.addNoise(query, QUERY_RESULT, EPSILON)
-    println(s"Noisy result (run $i): %.0f".format(noisyResult))
   }
 }
