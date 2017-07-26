@@ -68,7 +68,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
     results
   }
 
-  /** Set the distance ''k'' from the true database for the elastic sensitivity calculation
+  /** Set the distance ''k'' from the true database for the elastic sensitivity calculation.
     *
     * @param k Desired distance from true database (default 0, to approximate local sensitivity)
     */
@@ -113,10 +113,10 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
   override def transferProject(node: Project, idx: Int, state: SensitivityInfo): SensitivityInfo = {
     val projectNode = node.getProjects.get(idx)
 
-    // In our relational algebra trees, COUNT(*) is expressed as a COUNT of the projection of literal value 0 on the
-    // input. Accordingly, for projections of literal values, for which we would otherwise miss the implicit stability
-    // dependence on the .input relation, we expliticly copy the stability of the input so the correct stability wil
-    // propagate any upstream COUNT aggregation.
+    // In relational algebra trees, SQL's COUNT(*) function is represented as a COUNT aggregation of the projection of
+    // literal value 0 on the input. Accordingly, at projections of literal values, for which we would otherwise miss
+    // the implicit stability dependence on the .input relation, we expliticly copy the stability of the input so the
+    // correct stability will propagate to any upstream COUNT aggregation.
     projectNode match {
       case r: RexLiteral =>
         val inputState = resultMap(node.getInput).head
@@ -130,6 +130,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
     val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
     val colName = node.getRowType.getFieldNames.get(idx)
 
+    // Fetch metadata/schema information for this column
     val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
     val isUnique = colProperties.get("isUnique").fold(false)(_.toBoolean)
     val maxFreq = if (isUnique) 1.0 else colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
@@ -167,9 +168,8 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
 
   override def joinNode(node: RelOrExpr, children: Iterable[RelOrExpr]): ColumnFacts[SensitivityInfo] = {
     node match {
+      // Stability must be updated at every Join node in the query.
       case Relation(j: Join) =>
-        // Stability must be updated at every Join node in the query.
-
         /*
            If the join has more than one AND-ed equijoin condition (e.g., SELECT a JOIN b ON a.x = b.x AND a.y = b.y) we
            evaluate each one individually and select the most restrictive, i.e., the one producing the lowest stability.
