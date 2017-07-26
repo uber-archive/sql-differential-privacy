@@ -31,7 +31,6 @@ import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, Relatio
 import com.uber.engsec.dp.util.IdentityHashMap
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Aggregate, Filter, Project, Sort, TableScan, Join => RelJoin}
-import org.apache.calcite.rel.logical.LogicalSort
 import org.apache.calcite.rex._
 
 import scala.collection.{MapLike, mutable}

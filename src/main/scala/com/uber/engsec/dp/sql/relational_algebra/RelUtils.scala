@@ -31,7 +31,7 @@ import org.apache.calcite.rel.externalize.RelJsonWriter
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter
 import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlDialect.DatabaseProduct
-import org.apache.calcite.sql.{SqlDialect, SqlKind}
+import org.apache.calcite.sql.SqlKind
 
 object RelUtils {
   /** Extracts the left and right column indexes, respectively, used in an equijoin condition, or None if

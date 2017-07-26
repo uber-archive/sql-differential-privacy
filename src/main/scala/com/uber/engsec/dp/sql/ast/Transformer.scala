@@ -26,10 +26,10 @@ import com.facebook.presto.sql.tree.{AliasedRelation, AllColumns, ArithmeticBina
 import com.uber.engsec.dp.analysis.name_resolution.{NameResolution, NameResolutionAnalysis, ReferenceInfo}
 import com.uber.engsec.dp.exception._
 import com.uber.engsec.dp.schema.{DatabaseModel, Schema}
-import com.uber.engsec.dp.sql.{AbstractAnalysis, TreePrinter}
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, Reference, UnstructuredReference}
 import com.uber.engsec.dp.sql.dataflow_graph.relation._
 import com.uber.engsec.dp.sql.dataflow_graph.{Node => DFGNode}
+import com.uber.engsec.dp.sql.{AbstractAnalysis, TreePrinter}
 import com.uber.engsec.dp.util.IdentityHashMap
 
 import scala.collection.JavaConverters._

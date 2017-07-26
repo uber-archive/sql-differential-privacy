@@ -25,9 +25,9 @@ package com.uber.engsec.dp.dataflow.column
 import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 import com.uber.engsec.dp.exception.AnalysisException
-import com.uber.engsec.dp.sql.dataflow_graph.{DataflowGraphFunctions, Node}
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, UnstructuredReference}
 import com.uber.engsec.dp.sql.dataflow_graph.relation._
+import com.uber.engsec.dp.sql.dataflow_graph.{DataflowGraphFunctions, Node}
 
 /** Column fact analysis on dataflow graphs. For more details see [[AbstractColumnAnalysis]].
   */

@@ -27,7 +27,7 @@ import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.relational_algebra._
-import org.apache.calcite.rel.core.{Aggregate, Filter, Project, Sort, TableScan, Join}
+import org.apache.calcite.rel.core._
 import org.apache.calcite.rel.{BiRel, RelNode, SingleRel}
 import org.apache.calcite.rex.{RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlKind
