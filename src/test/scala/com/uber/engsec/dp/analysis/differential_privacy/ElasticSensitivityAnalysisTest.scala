@@ -127,7 +127,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id",
       // ensure we can decompose the equijoin condition from the remaining conjunctive clauses
       "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = customers.customer_id AND orders.customer_id != 1"
-    ).foreach { validateSensitivity(_, 0, 1.0) }
+    ).foreach { validateSensitivity(_, 0, 100.0) }
 
     /** Negative test cases */
     List(
@@ -154,7 +154,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       // if more than one clause is equijoin, analysis should choose the one that results in lower sensitivity (regardless of the order of clauses)
       "SELECT COUNT(*) FROM orders JOIN customers ON (orders.customer_id = customers.customer_id) AND (orders.product_id = customers.address)",
       "SELECT COUNT(*) FROM orders JOIN customers ON (orders.product_id = customers.address) AND (orders.customer_id = customers.customer_id)"
-    ).foreach { validateSensitivity(_, 0, 1.0) }
+    ).foreach { validateSensitivity(_, 0, 100.0) }
 
     /** Negative test cases */
     List(
@@ -196,21 +196,6 @@ class ElasticSensitivityAnalysisTest extends TestCase {
     validateSensitivity(query, 25, 34375.0)
   }
 
-  def testCompoundJoinUniquenessOptimization() {
-    // maxFreqs:
-    //   orders.customer_id = 100
-    //   customers.customer_id [unique=true]
-    //   recommendations.customer_id = 250
-    val query = """
-      WITH t1 AS (
-        SELECT orders.customer_id FROM orders JOIN customers ON orders.customer_id = customers.customer_id
-      )
-      SELECT COUNT(*)
-      FROM t1 JOIN recommendations ON t1.customer_id = recommendations.customer_id
-    """
-    validateSensitivity(query, 0, 250.0)
-  }
-
   def testCompoundJoinPublicTableOptimization() {
     // maxFreqs:
     //   orders.product_id = 500
@@ -228,9 +213,9 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   }
 
   def testSelfJoinSimple() {
-    // maxFreq: orders.order_id [unique=true]
+    // maxFreq: orders.order_id = 1
     val query1 = "SELECT COUNT(*) FROM orders o1 JOIN orders o2 ON o1.order_id = o2.order_id"
-    validateSensitivity(query1, 0, 1.0)
+    validateSensitivity(query1, 0, 3.0)
 
     // maxFreq: orders.customer_id = 100
     val query2 = "SELECT COUNT(*) FROM orders o1 JOIN orders o2 ON o1.customer_id = o2.customer_id"
@@ -242,13 +227,13 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   def testSelfJoinFromSubquery() {
     // maxFreqs:
     //   orders.customer_id = 100
-    //   orders.order_id [unique=true]
+    //   orders.order_id = 1
     val query = """
       WITH t1 AS
         (SELECT * FROM orders JOIN customers ON orders.customer_id = customers.customer_id)
       SELECT COUNT(*) FROM t1 JOIN orders ON t1.order_id = orders.order_id
     """
-    validateSensitivity(query, 0, 1.0)
+    validateSensitivity(query, 0, 201.0)
   }
 
   def testDeepUniqueSelfJoin() = {
@@ -257,19 +242,19 @@ class ElasticSensitivityAnalysisTest extends TestCase {
         (SELECT c.customer_id AS tra_id FROM orders o JOIN customers c ON o.order_id = c.customer_id)
       SELECT COUNT(*) FROM r1 a JOIN r1 b ON a.tra_id = b.tra_id
     """
-    validateSensitivity(query, 0, 1.0)
+    validateSensitivity(query, 0, 3.0)
   }
 
   def testAggregationInNestedQuery() = {
     // maxFreqs:
     //   orders.customer_id = 100
-    //   customers.customer_id [unique=true]
+    //   customers.customer_id = 1
     val query = """
       WITH t1 AS
         (SELECT COUNT(*) as mycount FROM orders JOIN customers ON orders.customer_id = customers.customer_id)
       SELECT mycount FROM t1
     """
-    validateSensitivity(query, 0, 1.0)
+    validateSensitivity(query, 0, 100.0)
   }
 
   def testNonCountingQuery() = {
@@ -299,19 +284,6 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       "SELECT COUNT(*) FROM orders JOIN customers ON orders.order_id = orders.customer_id",
       "SELECT COUNT(*) FROM orders, customers"
     ).foreach { assertException(_, classOf[UnsupportedConstructException]) }
-  }
-
-  def testUniquenessOptimization() {
-    // maxFreqs:
-    //   orders.customer_id = 100
-    //   customers.customer_id [unique=true]
-    val query = """
-      SELECT COUNT(*)
-      FROM orders JOIN customers ON orders.customer_id = customers.customer_id
-      WHERE product_id = 1
-    """
-    // with uniqueness optimization, sensitivity is 1.0
-    validateSensitivity(query, 0, 1.0)
   }
 
   def testPublicTableOptimization() {

@@ -33,7 +33,6 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
   *                  which is stored as a column fact to simplify analysis implementation. The lattice is defined by the
   *                  natural ordering.
   * @param maxFreq Max frequency of the column. The lattice is defined by the natural ordering.
-  * @param isUnique Is the current column unique? Boolean lattice with bottom = false and top = true.
   * @param optimizationUsed Flag to track whether the unique-key or public-table optimization was used on this column
   *                         (for debugging and experiments)
   * @param aggregationApplied Has an aggregation already been applied to this column?
@@ -49,13 +48,12 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 case class SensitivityInfo(sensitivity: Option[Double],
                            stability: Double,
                            maxFreq: Double,
-                           isUnique: Boolean,
                            optimizationUsed: Boolean,
                            aggregationApplied: Boolean,
                            postAggregationArithmeticApplied: Boolean,
                            canRelease: Boolean,
                            ancestors: Set[String]) {
-  override def toString: String = s"sensitivity: $sensitivity, stability: $stability, maxFreq: $maxFreq, isUnique: $isUnique, optimizationUsed: $optimizationUsed, aggregationApplied: $aggregationApplied, postAggregationArithmeticApplied: $postAggregationArithmeticApplied, canRelease: $canRelease, ancestors: $ancestors"
+  override def toString: String = s"sensitivity: $sensitivity, stability: $stability, maxFreq: $maxFreq, optimizationUsed: $optimizationUsed, aggregationApplied: $aggregationApplied, postAggregationArithmeticApplied: $postAggregationArithmeticApplied, canRelease: $canRelease, ancestors: $ancestors"
 }
 
 /** The abstract for elastic sensitivity analysis is a product lattice with pointwise ordering of the element types
@@ -67,7 +65,6 @@ object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
       sensitivity = None,
       stability = 1.0,
       maxFreq = 0.0,
-      isUnique = false,
       optimizationUsed = false,
       aggregationApplied = false,
       postAggregationArithmeticApplied = false,
@@ -79,7 +76,6 @@ object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
       sensitivity = (first.sensitivity ++ second.sensitivity).reduceLeftOption(math.max),
       stability = math.max(first.stability, second.stability),
       maxFreq = math.max(first.maxFreq, second.maxFreq),
-      isUnique = first.isUnique && second.isUnique,
       optimizationUsed = first.optimizationUsed || second.optimizationUsed,
       aggregationApplied = first.aggregationApplied || second.aggregationApplied,
       postAggregationArithmeticApplied = first.postAggregationArithmeticApplied || second.postAggregationArithmeticApplied,

@@ -7,7 +7,7 @@ databases:
   - table: "orders"
     columns:
     - name: "order_id"
-      isUnique: true
+      maxFreq: 1
     - name: "order_date"
       canRelease: true
     - name: "customer_id"
@@ -26,7 +26,7 @@ databases:
   - table: "customers"
     columns:
     - name: "customer_id"
-      isUnique: true
+      maxFreq: 1
     - name: "name"
       isTainted: true
     - name: "address"

@@ -94,7 +94,6 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           maxFreq=Double.PositiveInfinity,
           aggregationApplied=true,
           postAggregationArithmeticApplied=state.aggregationApplied,
-          isUnique=false,
           canRelease=false)
 
       case _ => // other aggregation functions -> return Top (conservative)
@@ -104,7 +103,6 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
           maxFreq=Double.PositiveInfinity,
           aggregationApplied=true,
           postAggregationArithmeticApplied=state.aggregationApplied,
-          isUnique=false,
           canRelease=false)
     }
   }
@@ -132,15 +130,13 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
 
     // Fetch metadata/schema information for this column
     val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
-    val isUnique = colProperties.get("isUnique").fold(false)(_.toBoolean)
-    val maxFreq = if (isUnique) 1.0 else colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
+    val maxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
     val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
 
     SensitivityInfo(
       sensitivity=None, // sensitivity is undefined until aggregations are applied
       stability=1.0,  // stability of tables (before SQL joins) is 1.0
       maxFreq=maxFreq,
-      isUnique=isUnique,
       optimizationUsed=false,
       aggregationApplied=false,
       postAggregationArithmeticApplied=false,
@@ -155,14 +151,11 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
         state.copy(
           sensitivity = Some(Double.PositiveInfinity),
           maxFreq = Double.PositiveInfinity,
-          isUnique = false,
           postAggregationArithmeticApplied = state.aggregationApplied && !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind))
       case _ =>
         // conservatively handle all other expression nodes, which could arbitrarily alter column values such that
         // current metrics are invalidated (e.g., in the case of arithmetic expressions).
-        state.copy(
-          maxFreq = Double.PositiveInfinity,
-          isUnique = false)
+        state.copy(maxFreq = Double.PositiveInfinity)
     }
   }
 
@@ -214,16 +207,6 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
               // non self-join case
               Math.max(leftStability * maxFreqRightJoinColumn, rightStability * maxFreqLeftJoinColumn)
             }
-
-          // Uniqueness optimization.
-          if (leftColFact.isUnique || rightColFact.isUnique) {
-            if (leftColFact.isUnique) {
-              newStaticStability = leftStability
-            } else {
-              newStaticStability = rightStability
-            }
-            optimizationUsed = true
-          }
 
           // Public table optimization.
           j.getRight match {
