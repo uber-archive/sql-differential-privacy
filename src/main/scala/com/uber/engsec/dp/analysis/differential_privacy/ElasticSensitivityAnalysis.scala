@@ -82,6 +82,15 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   override def transferAggregate(node: Aggregate,
                                  aggFunctions: IndexedSeq[Option[AggFunction]],
                                  state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
+
+    val numGroupedCols = aggFunctions.count{ _.isEmpty }
+    val newNodeFact =
+      // Histograms introduce a factor of 2 to the stability of the relation
+      if (numGroupedCols > 0)
+        state.nodeFact.copy(stability = 2 * state.nodeFact.stability)
+      else
+        state.nodeFact
+
     val newColFacts = state.colFacts.zipWithIndex.map { case (colState, idx) =>
       val aggFunction = aggFunctions(idx)
       aggFunction match {
@@ -96,9 +105,9 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
 
         case Some(func) => // aggregated column
           val newSensitivity = func match {
-            // The sensitivity of a count column is the stability of the target node. For all other aggregation
-            // functions the sensitivity is raised to infinity (since these functions are not yet supported)
-            case COUNT => state.nodeFact.stability
+            // The sensitivity of a count column is the stability of this node. For all other aggregation
+            // functions the sensitivity is infinity (since these functions are not yet supported)
+            case COUNT => newNodeFact.stability
             case _     => Double.PositiveInfinity
           }
 
@@ -111,7 +120,7 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
       }
     }
 
-    state.copy(colFacts = newColFacts)
+    NodeColumnFacts(newNodeFact, newColFacts)
   }
 
   override def transferTableScan(node: TableScan,

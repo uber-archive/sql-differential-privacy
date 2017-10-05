@@ -88,7 +88,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
 
   def testSimpleHistogram() {
     val query = "SELECT order_date, COUNT(*) FROM orders GROUP BY 1"
-    validateSensitivity(query, 0, 0.0, 1.0)
+    validateSensitivity(query, 0, 0.0, 2.0)
   }
 
   def testHistogramProtectedBin() {
@@ -175,8 +175,8 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       WHERE orders.product_id = 1
       GROUP BY 1
     """
-    validateSensitivity(query, 0, 0.0, 250.0)
-    validateSensitivity(query, 10, 0.0, 260.0)
+    validateSensitivity(query, 0, 0.0, 500.0)
+    validateSensitivity(query, 10, 0.0, 520.0)
   }
 
   def testCompoundJoin() {
@@ -274,7 +274,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       WITH t1 AS (SELECT order_date, COUNT(*)+1 as num_orders_plus_one FROM orders GROUP BY 1)
       SELECT COUNT(order_date) FROM t1 WHERE num_orders_plus_one < 10
     """
-    validateSensitivity(query, 0, 1.0)
+    validateSensitivity(query, 0, 2.0)
   }
 
   def testNonEquijoin() = {
