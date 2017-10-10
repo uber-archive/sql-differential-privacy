@@ -33,4 +33,6 @@ object AggFunctions {
   case object AVG extends AggFunction
   case object VAR extends AggFunction
   case object STDDEV extends AggFunction
+
+
 }

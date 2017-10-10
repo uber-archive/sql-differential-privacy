@@ -42,6 +42,7 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
   with RelColumnAnalysisFunctions[E]
   with RelTreeFunctions {
 
+  // Use a regular hashmap for results (instead of IdentityHashMap)
   override val resultMap: mutable.HashMap[RelOrExpr, ColumnFacts[E]] = mutable.HashMap()
 
   override final def transferNode(node: RelOrExpr, state: ColumnFacts[E]): ColumnFacts[E] = {
@@ -136,7 +137,7 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
             else
               argIndexes.map { inputFacts(_) }
 
-          joinFacts(domain, childFacts)
+          AbstractColumnAnalysis.joinFacts(domain, childFacts)
         }
 
         val allFacts = factsFromGroupedInputs ++ factsFromAggCalls
@@ -176,37 +177,6 @@ abstract class RelColumnAnalysis[E, T <: AbstractDomain[E]](domain: AbstractDoma
 
       case Relation(r) => throw new RuntimeException(s"Unhandled relation node type: ${node.unwrap.getClass}")
     }
-  }
-
-  /******************************************************************************************************************
-    * Helper methods, may be called by analysis transfer functions.
-    ****************************************************************************************************************/
-
-  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
-    * config is defined for the table.
-    */
-  def getTableProperties(node: TableScan): Map[String, String] = {
-    import scala.collection.JavaConverters._
-    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    Schema.getTableProperties(tableName)
-  }
-
-  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
-    * config is defined for the table/column.
-    */
-  def getColumnProperties(node: TableScan, colIdx: Int): Map[String, String] = {
-    import scala.collection.JavaConverters._
-    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    val colName = node.getRowType.getFieldNames.get(colIdx)
-    Schema.getSchemaMapForTable(tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
-  }
-
-  /** Returns the fully qualified table and column name. */
-  def getQualifiedColumnName(table: TableScan, colIdx: Int): String = {
-    import scala.collection.JavaConverters._
-    val tableName = table.getTable.getQualifiedName.asScala.mkString(".")
-    val colName = table.getRowType.getFieldNames.get(colIdx)
-    s"$tableName.$colName"
   }
 }
 

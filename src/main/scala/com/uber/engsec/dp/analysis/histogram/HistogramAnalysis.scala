@@ -26,6 +26,7 @@ import com.uber.engsec.dp.dataflow.AggFunctions._
 import com.uber.engsec.dp.dataflow.column.RelColumnAnalysis
 import com.uber.engsec.dp.dataflow.domain._
 import com.uber.engsec.dp.dataflow.domain.lattice.FlatLatticeDomain
+import com.uber.engsec.dp.sql.relational_algebra.RelUtils
 import org.apache.calcite.rel.core.{Aggregate, TableScan}
 
 /** Returns the aggregation status of each output column of a query. The results of this analysis are used to classify
@@ -52,7 +53,7 @@ class HistogramAnalysis extends RelColumnAnalysis(AggregationDomain) {
   }
 
   override def transferTableScan(node: TableScan, idx: Int, state: AggregationInfo): AggregationInfo = {
-    val qualifiedColName = getQualifiedColumnName(node, idx)
+    val qualifiedColName = RelUtils.getQualifiedColumnName(node, idx)
     state.copy(references=Set(qualifiedColName))
   }
 }

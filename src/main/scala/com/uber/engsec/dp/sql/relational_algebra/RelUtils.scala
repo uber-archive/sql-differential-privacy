@@ -26,7 +26,7 @@ import java.io.{PrintWriter, StringWriter}
 
 import com.uber.engsec.dp.schema.Schema
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.Join
+import org.apache.calcite.rel.core.{Join, TableScan}
 import org.apache.calcite.rel.externalize.RelJsonWriter
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter
 import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
@@ -91,5 +91,36 @@ object RelUtils {
     val dialect = DatabaseProduct.valueOf(Schema.currentDb.dialect.toUpperCase).getDialect
     val converter = new RelToSqlConverter(dialect)
     converter.visitChild(0, rel).asStatement.toSqlString(dialect).getSql
+  }
+
+  /******************************************************************************************************************
+    * Helper methods, may be called by analysis transfer functions.
+    ****************************************************************************************************************/
+
+  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
+    * config is defined for the table.
+    */
+  def getTableProperties(node: TableScan): Map[String, String] = {
+    import scala.collection.JavaConverters._
+    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
+    Schema.getTableProperties(tableName)
+  }
+
+  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
+    * config is defined for the table/column.
+    */
+  def getColumnProperties(node: TableScan, colIdx: Int): Map[String, String] = {
+    import scala.collection.JavaConverters._
+    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
+    val colName = node.getRowType.getFieldNames.get(colIdx)
+    Schema.getSchemaMapForTable(tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
+  }
+
+  /** Returns the fully qualified table and column name. */
+  def getQualifiedColumnName(table: TableScan, colIdx: Int): String = {
+    import scala.collection.JavaConverters._
+    val tableName = table.getTable.getQualifiedName.asScala.mkString(".")
+    val colName = table.getRowType.getFieldNames.get(colIdx)
+    s"$tableName.$colName"
   }
 }

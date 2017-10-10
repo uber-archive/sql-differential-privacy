@@ -38,21 +38,9 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 abstract class AbstractColumnAnalysis[N <: AnyRef, E, D <: AbstractDomain[E]]
   extends AbstractDataflowAnalysis[N, ColumnFacts[E]] {
 
-  def joinFacts(domain: AbstractDomain[E], facts: Iterable[E]): E = {
-    val resultFact: E =
-      if (facts.isEmpty)
-        domain.bottom
-      else if (facts.size == 1)
-        facts.head
-      else
-        facts.reduce( (first, second) => domain.leastUpperBound(first, second) )
-
-    resultFact
-  }
-
   def flattenJoinChildren(domain: AbstractDomain[E], node: N, children: Iterable[N]): ColumnFacts[E] = {
     val childrenFacts = children.flatMap{ resultMap(_) }
-    val resultFacts = joinFacts(domain, childrenFacts)
+    val resultFacts = AbstractColumnAnalysis.joinFacts(domain, childrenFacts)
     IndexedSeq(resultFacts)
   }
 
@@ -69,4 +57,16 @@ object AbstractColumnAnalysis {
   implicit def elemListToColumnFacts[J](elems: List[J]): ColumnFacts[J] = elems.toIndexedSeq
   implicit def elemsToColumnFacts[J](elems: J*): ColumnFacts[J] = elems.toIndexedSeq
   implicit def elemToColumnFacts[J](elem: J): ColumnFacts[J] = IndexedSeq(elem)
+
+  def joinFacts[E](domain: AbstractDomain[E], facts: Iterable[E]): E = {
+    val resultFact: E =
+      if (facts.isEmpty)
+        domain.bottom
+      else if (facts.size == 1)
+        facts.head
+      else
+        facts.reduce( (first, second) => domain.leastUpperBound(first, second) )
+
+    resultFact
+  }
 }

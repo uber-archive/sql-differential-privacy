@@ -131,7 +131,7 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
     // Fetch metadata/schema information for this column
     val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
     val maxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
-    val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
+    val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || RelUtils.getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
 
     SensitivityInfo(
       sensitivity=None, // sensitivity is undefined until aggregations are applied
@@ -210,14 +210,14 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
 
           // Public table optimization.
           j.getRight match {
-            case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
+            case d: TableScan if RelUtils.getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
               newStaticStability = math.min(newStaticStability, rightStability * maxFreqLeftJoinColumn)
               optimizationUsed = true
             case _ => ()
           }
 
           j.getLeft match {
-            case d: TableScan if getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
+            case d: TableScan if RelUtils.getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
               newStaticStability = math.min(newStaticStability, leftStability * maxFreqRightJoinColumn)
               optimizationUsed = true
             case _ => ()

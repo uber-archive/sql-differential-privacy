@@ -23,6 +23,7 @@
 package com.uber.engsec.dp.sql
 
 import com.facebook.presto.sql.tree.{AliasedRelation, AllColumns, DereferenceExpression, FunctionCall, GroupBy, QualifiedNameReference, Query, QueryBody, SimpleGroupBy, SingleColumn, SortItem, StringLiteral, Table, With, WithQuery, Expression => PrestoExpression, Join => PrestoJoin, Node => PrestoNode, Select => PrestoSelect}
+import com.uber.engsec.dp.dataflow.column.NodeColumnFacts
 import com.uber.engsec.dp.sql.ast.ASTFunctions
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, UnstructuredReference}
 import com.uber.engsec.dp.sql.dataflow_graph.relation.{Relation => DFGRelation, _}
@@ -207,6 +208,44 @@ class TreePrinter[T <: AnyRef] {
         else
           nodeInfo.printStr.substring(0, MAX_NODE_STRING_LENGTH) + " ..."
 
+      def printNodeAndColFacts(node: T, nodeFact: Option[_], colFacts: IndexedSeq[_]): String = {
+        val colNames = node match {
+          // Dataflow graph nodes
+          case r: DFGRelation => r.columnNames
+          case c: ColumnReference => List(c.of.getColumnName(c.colIndex))
+
+          // RelRex nodes
+          case Relation(r) => r.getRowType.getFieldNames.asScala
+
+          case _ => Nil // All other node types have no formal column names
+        }
+
+        // Only print node result if current node is a relation
+        val nodeResult =
+          if (colNames.isEmpty) None
+          else nodeFact.map{ x => s"{ $x }" }
+
+        // Print all column results, one per line
+        val colResults =
+          if (colNames.isEmpty) {
+            assert (colFacts.size == 1)
+            List(colFacts.head.toString)
+          }
+          else {
+            assert (colNames.size == colFacts.size)
+            val maxColName = colNames.map(_.length).max
+            colNames.zip(colFacts).map { x => s"%-${maxColName}s : %s".format(x._1, x._2.toString) }
+          }
+
+        val printLines = nodeResult ++ colResults
+
+        val linePrefix = prefix + (if (isTail) "     " else "│    ") + (if (nodeInfo.namedChildren.isEmpty) "" else "│")
+        val formattedResult = printLines.mkString(
+          s"\n%-${maxIndent}s   ${if (printNodeNumbers) "     " else ""}".format(linePrefix)
+        )
+        formattedResult
+      }
+
       // Generate the "state" print string
       val statePrintStr =
         if (alreadyPrinted)
@@ -216,28 +255,8 @@ class TreePrinter[T <: AnyRef] {
         else {
           resultMap.get(node) match {
             // Print column fact analysis results with aligned formatting to help readability
-            case Some(colFacts: IndexedSeq[_]) =>
-              val colNames = node match {
-                // Dataflow graph nodes
-                case r: DFGRelation => r.columnNames
-                case c: ColumnReference => List(c.of.getColumnName(c.colIndex))
-
-                // RelRex nodes
-                case Relation(r) => r.getRowType.getFieldNames.asScala
-
-                case _ => Nil // All other node types have no formal column names and will be printed as "_"
-              }
-
-              val noColNameStr = "_"
-              val maxColName = if (colNames.isEmpty) noColNameStr.length else colNames.map(_.length).max
-              val linePrefix = prefix + (if (isTail) "     " else "│    ") + (if (nodeInfo.namedChildren.isEmpty) "" else "│")
-
-              val colFactsAsString = colNames.zipAll(colFacts, noColNameStr, "_").map { x => s"%-${maxColName}s : %s".format(x._1, x._2.toString) }
-              val formattedResult = colFactsAsString.mkString(
-                s"\n%-${maxIndent}s   ${if (printNodeNumbers) "     " else ""}".format(linePrefix)
-              )
-              formattedResult
-
+            case Some(NodeColumnFacts(nodeFact, colFacts)) => printNodeAndColFacts(node, Some(nodeFact), colFacts)
+            case Some(colFacts: IndexedSeq[_]) => printNodeAndColFacts(node, None, colFacts)
             case Some(x) => x.toString + schemaStr
             case None if resultMap.nonEmpty => "" // if the result map is non-empty but current node isn't found, we must have aborted analysis early; don't print schema for these unprocessed nodes
             case _ => "- " + schemaStr
