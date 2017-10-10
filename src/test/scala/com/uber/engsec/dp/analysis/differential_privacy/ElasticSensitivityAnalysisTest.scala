@@ -209,7 +209,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       FROM t1 JOIN recommendations ON t1.customer_id = recommendations.customer_id
     """
     validateSensitivity(query, 0, 75000.0)
-    validateSensitivity(query, 25, 89375.0)
+    validateSensitivity(query, 25, 82500.0)
   }
 
   def testSelfJoinSimple() {

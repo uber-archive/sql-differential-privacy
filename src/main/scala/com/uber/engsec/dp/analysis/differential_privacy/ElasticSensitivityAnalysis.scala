@@ -124,11 +124,12 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
       // Fetch metadata for this column
       val colName = node.getRowType.getFieldNames.get(idx)
       val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
-      val colMaxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
+      val colMaxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble)
+      val maxFreqAtK = if (isTablePublic) colMaxFreq else (colMaxFreq + k)
       val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || isTablePublic
 
       colState.copy(
-        maxFreq = colMaxFreq,
+        maxFreq = maxFreqAtK,
         canRelease = canRelease
       )
     }
