@@ -93,7 +93,7 @@ object DPUtils {
     val analysis = new ElasticSensitivityAnalysis()
     analysis.setK(k)
 
-    val result = analysis.analyzeQuery(query)
+    val result = analysis.analyzeQuery(query).colFacts
     assert (result.size == 1)  // this example code works for single-column queries.
     result.head.sensitivity.get
   }
@@ -109,7 +109,7 @@ object DPUtils {
 
     Stream.from(0).map{ k =>
       analysis.setK(k)
-      val result = analysis.analyzeQuery(tree)
+      val result = analysis.analyzeQuery(tree).colFacts
       assert (result.size == 1)  // this example code works for single-column queries. See note above about extending to multi-column queries.
       result.head.sensitivity.get
     }

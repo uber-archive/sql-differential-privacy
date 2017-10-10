@@ -24,14 +24,13 @@ package com.uber.engsec.dp.analysis.differential_privacy
 
 import com.uber.engsec.dp.analysis.histogram.{HistogramAnalysis, QueryType}
 import com.uber.engsec.dp.dataflow.AggFunctions._
-import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
-import com.uber.engsec.dp.dataflow.column.RelColumnAnalysis
+import com.uber.engsec.dp.dataflow.column.{NodeColumnFacts, RelNodeColumnAnalysis}
 import com.uber.engsec.dp.exception.{UnsupportedConstructException, UnsupportedQueryException}
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.relational_algebra._
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.{Aggregate, Join, Project, TableScan}
-import org.apache.calcite.rex.{RexCall, RexLiteral, RexNode}
+import org.apache.calcite.rel.core.{Aggregate, Join, TableScan}
+import org.apache.calcite.rex.{RexCall, RexNode}
 import org.apache.calcite.sql.SqlKind
 
 /** Elastic sensitivity analysis.
@@ -41,25 +40,29 @@ import org.apache.calcite.sql.SqlKind
   * Elastic sensitivity can be combined with a smoothing function (such as smooth sensitivity) to arrive at a
   * sensitivity value that can be used to calibrate the scale of Laplace noise needed to achieve differential privacy.
   */
-class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
+class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, SensitivityDomain) {
 
   var k: Int = 0
   val checkBinsForRelease: Boolean = System.getProperty("dp.check_bins", "true").toBoolean
 
   /** Reject non-statistical queries before analysis begins. */
-  override def run(root: RelOrExpr): ColumnFacts[SensitivityInfo] = {
+  override def run(root: RelOrExpr): NodeColumnFacts[RelStability,ColSensitivity] = {
     val histogramResults = new HistogramAnalysis().run(root)
     val queryType = QueryType.getQueryType(histogramResults)
 
     if ((queryType != QueryType.HISTOGRAM && queryType != QueryType.NON_HISTOGRAM_STATISTICAL) ||
-        histogramResults.filter{ _.isAggregation }.exists{ _.outermostAggregation.get != COUNT })
+      histogramResults.filter {
+        _.isAggregation
+      }.exists {
+        _.outermostAggregation.get != COUNT
+      })
       throw new UnsupportedQueryException("This analysis currently works only on statistical and histogram counting queries")
 
     val results = super.run(root)
 
     // Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
-    // (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently model.
-    val idx = results.indexWhere{ col => col.sensitivity.contains(Double.PositiveInfinity) && col.postAggregationArithmeticApplied }
+    // (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently support.
+    val idx = results.colFacts.indexWhere { col => col.sensitivity.contains(Double.PositiveInfinity) && col.postAggregationArithmeticApplied }
     if (idx != -1) {
       val colName = root.unwrap.asInstanceOf[RelNode].getRowType.getFieldNames.get(idx)
       throw new ArithmeticOnAggregationResultException(colName)
@@ -76,82 +79,91 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
 
   import scala.collection.JavaConverters._
 
-  override def transferAggregate(node: Aggregate, idx: Int, aggFunction: Option[AggFunction], state: SensitivityInfo): SensitivityInfo = {
-    aggFunction match {
-      case None => // histogram bin
-        if (checkBinsForRelease && !state.canRelease) {
-          val binName = node.getRowType.getFieldNames.get(idx)
-          throw new ProtectedBinException(binName)
-        }
+  override def transferAggregate(node: Aggregate,
+                                 aggFunctions: IndexedSeq[Option[AggFunction]],
+                                 state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
+    val newColFacts = state.colFacts.zipWithIndex.map { case (colState, idx) =>
+      val aggFunction = aggFunctions(idx)
+      aggFunction match {
+        case None => // histogram bin
+          if (checkBinsForRelease && !colState.canRelease) {
+            val binName = node.getRowType.getFieldNames.get(idx)
+            throw new ProtectedBinException(binName)
+          }
 
-        // Sensitivity of bins that are safe for release is zero (i.e. no noise added)
-        state.copy(sensitivity=Some(0.0))
+          // Sensitivity of bins that are safe for release is zero (i.e. no noise added)
+          colState.copy(sensitivity = Some(0.0))
 
-      case Some(COUNT) =>
-        // The sensitivity of count() is the stability of the target node (stored in the current column fact)
-        state.copy(
-          sensitivity=Some(state.stability),
-          maxFreq=Double.PositiveInfinity,
-          aggregationApplied=true,
-          postAggregationArithmeticApplied=state.aggregationApplied,
-          canRelease=false)
+        case Some(func) => // aggregated column
+          val newSensitivity = func match {
+            // The sensitivity of a count column is the stability of the target node. For all other aggregation
+            // functions the sensitivity is raised to infinity (since these functions are not yet supported)
+            case COUNT => state.nodeFact.stability
+            case _     => Double.PositiveInfinity
+          }
 
-      case _ => // other aggregation functions -> return Top (conservative)
-        state.copy(
-          sensitivity=Some(Double.PositiveInfinity),
-          stability=Double.PositiveInfinity,
-          maxFreq=Double.PositiveInfinity,
-          aggregationApplied=true,
-          postAggregationArithmeticApplied=state.aggregationApplied,
-          canRelease=false)
+          colState.copy(
+            sensitivity = Some(newSensitivity),
+            maxFreq = Double.PositiveInfinity,
+            aggregationApplied = true,
+            postAggregationArithmeticApplied = colState.aggregationApplied,
+            canRelease = false)
+      }
     }
+
+    state.copy(colFacts = newColFacts)
   }
 
-
-  override def transferProject(node: Project, idx: Int, state: SensitivityInfo): SensitivityInfo = {
-    val projectNode = node.getProjects.get(idx)
-
-    // In relational algebra trees, SQL's COUNT(*) function is represented as a COUNT aggregation of the projection of
-    // literal value 0 on the input. Accordingly, at projections of literal values, for which we would otherwise miss
-    // the implicit stability dependence on the .input relation, we expliticly copy the stability of the input so the
-    // correct stability will propagate to any upstream COUNT aggregation.
-    projectNode match {
-      case r: RexLiteral =>
-        val inputState = resultMap(node.getInput).head
-        state.copy(stability=inputState.stability)
-
-      case _ => state
-    }
-  }
-
-  override def transferTableScan(node: TableScan, idx: Int, state: SensitivityInfo): SensitivityInfo = {
+  override def transferTableScan(node: TableScan,
+                                 state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
+    // Fetch metadata for the table
     val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    val colName = node.getRowType.getFieldNames.get(idx)
+    val isTablePublic = RelUtils.getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
 
-    // Fetch metadata/schema information for this column
-    val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
-    val maxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
-    val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || RelUtils.getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
+    val newColFacts = state.colFacts.zipWithIndex.map { case (colState, idx) =>
+      // Fetch metadata for this column
+      val colName = node.getRowType.getFieldNames.get(idx)
+      val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
+      val colMaxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble) + k
+      val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || isTablePublic
 
-    SensitivityInfo(
-      sensitivity=None, // sensitivity is undefined until aggregations are applied
-      stability=1.0,  // stability of tables (before SQL joins) is 1.0
-      maxFreq=maxFreq,
-      optimizationUsed=false,
-      aggregationApplied=false,
-      postAggregationArithmeticApplied=false,
-      canRelease=canRelease,
-      ancestors=Set(tableName))
+      colState.copy(
+        maxFreq = colMaxFreq,
+        canRelease = canRelease
+      )
+    }
+
+    val newNodeFact = state.nodeFact.copy(
+      isPublic = isTablePublic,
+      /** Public table optimization: on joins with public tables, new stability is equal to the maxFreq of the joined
+        * column from the public table times stability of the other relation.
+        *
+        * Setting initial stability to zero for public tables produces exactly this result, as the other terms
+        * fall out (see stability calculation in transferJoin). Additionally, it ensures that counting queries on
+        * only-public data will produce sensitivity of zero (i.e., no noise) without requiring any additional logic.
+        *
+        * Note that max column frequencies are always updated at joins regardless of public-ness.
+        */
+      stability = if (isTablePublic) 0.0 else 1.0,
+      ancestors = Set(tableName)
+    )
+
+    NodeColumnFacts(newNodeFact, newColFacts)
   }
 
-  override def transferExpression(node: RexNode, state: SensitivityInfo): SensitivityInfo = {
+  override def transferExpression(node: RexNode, state: ColSensitivity): ColSensitivity = {
+
     node match {
       case c: RexCall =>
+        // Equality and cast expressions should not trigger post aggregation arithmetic exceptions
+        val isArithmeticExpression = !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind)
+
         // We could model standard SQL functions here but for this implementation we treat every function conservatively.
         state.copy(
           sensitivity = Some(Double.PositiveInfinity),
           maxFreq = Double.PositiveInfinity,
-          postAggregationArithmeticApplied = state.aggregationApplied && !List(SqlKind.EQUALS, SqlKind.CAST).contains(c.getOperator.getKind))
+          postAggregationArithmeticApplied = state.aggregationApplied && isArithmeticExpression)
+
       case _ =>
         // conservatively handle all other expression nodes, which could arbitrarily alter column values such that
         // current metrics are invalidated (e.g., in the case of arithmetic expressions).
@@ -159,94 +171,74 @@ class ElasticSensitivityAnalysis extends RelColumnAnalysis(SensitivityDomain) {
     }
   }
 
-  override def joinNode(node: RelOrExpr, children: Iterable[RelOrExpr]): ColumnFacts[SensitivityInfo] = {
-    node match {
-      // Stability must be updated at every Join node in the query.
-      case Relation(j: Join) =>
-        /*
-           If the join has more than one AND-ed equijoin condition (e.g., SELECT a JOIN b ON a.x = b.x AND a.y = b.y) we
-           evaluate each one individually and select the most restrictive, i.e., the one producing the lowest stability.
-           This is sound because conjunction predicates may only decrease the stability of the join by adding
-           additional constraints, so computing the stability using any single clause will still produce an upper-bound
-           on the true stability. The code will throw an UnsupportedConstructException if the query does not include any
-           equijoin conditions, or uses other types of join predicates (e.g., disjunctions). See test cases for more
-           info.
-         */
-        val conjunctiveClauses = RelUtils.decomposeConjunction(j.getCondition)
-        val equijoinConditions = conjunctiveClauses.flatMap{ clause => RelUtils.extractEquiJoinColumns(j, clause) }
-        if (equijoinConditions.isEmpty)
-          throw new UnsupportedConstructException(s"This analysis only works on equijoins. Can't support join condition: ${j.getCondition.toString}")
+  override def transferJoin(node: Join, state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
+    /** Update the stability at every join, per elastic sensitivity definition. Throws UnsupportedConstructException
+      * if node contains no equijoin conditions, or uses other types of join predicates. See test cases for more info.
+      *
+      * If the join has more than one AND-ed equijoin condition (e.g., SELECT a JOIN b ON a.x = b.x AND a.y = b.y) we
+      * evaluate each condition and select the most restrictive, i.e., the one producing the lowest stability. This is
+      * sound because each conjunction predicate adds further restrictions that may decrease (but will never increase)
+      * the true stability of the join.
+      */
+    val conjunctiveClauses = RelUtils.decomposeConjunction(node.getCondition)
+    val equijoinConjuncts = conjunctiveClauses.flatMap { clause => RelUtils.extractEquiJoinColumns(node, clause) }
+    if (equijoinConjuncts.isEmpty)
+      throw new UnsupportedConstructException(s"This analysis only works on equijoins. Can't support join condition: ${node.getCondition.toString}")
 
-        val newStates = equijoinConditions.map { cols: (Int, Int) =>
+    val leftState = resultMap(Relation(node.getLeft))
+    val rightState = resultMap(Relation(node.getRight))
 
-          val (leftColumnIndex, rightColumnIndex) = cols
-          val conditionDomains = resultMap(Expression(j.getCondition))
-          var optimizationUsed = false
+    val leftStability = leftState.nodeFact.stability
+    val rightStability = rightState.nodeFact.stability
 
-          val leftState = resultMap(Relation(j.getLeft))
-          val rightState = resultMap(Relation(j.getRight))
+    // Determine if this is a self-join: get the intersection of ancestors for the left and right relations
+    // If the intersection is not empty, then this is a self-join
+    val isSelfJoin = (leftState.nodeFact.ancestors intersect rightState.nodeFact.ancestors).nonEmpty
 
-          val leftColFact = leftState(leftColumnIndex)
-          val rightColFact = rightState(rightColumnIndex)
+    case class ConjunctResult(maxFreqLeftJoinColumn: Double, maxFreqRightJoinColumn: Double, stability: Double)
 
-          val maxFreqLeftJoinColumn = leftColFact.maxFreq
-          val maxFreqRightJoinColumn = rightColFact.maxFreq
+    // Calculate stability for each conjunct, then select the one producing the tightest stability.
+    val conjunctResults = equijoinConjuncts.map { case (leftColumnIndex, rightColumnIndex) =>
 
-          val leftStability = leftColFact.stability
-          val rightStability = rightColFact.stability
+      val leftColFact = leftState.colFacts(leftColumnIndex)
+      val rightColFact = rightState.colFacts(rightColumnIndex)
 
-          // Determine if this is a self-join: get the intersection of ancestors for the left and right relations
-          // If the intersection is not empty, then this is a self-join
-          val allAncestors = leftColFact.ancestors intersect rightColFact.ancestors
+      val maxFreqLeftJoinColumn = leftColFact.maxFreq
+      val maxFreqRightJoinColumn = rightColFact.maxFreq
 
-          var newStaticStability =
-            if (allAncestors.nonEmpty) {
-              // self-join case
-              maxFreqLeftJoinColumn * rightStability + maxFreqRightJoinColumn * leftStability + rightStability * leftStability
-            } else {
-              // non self-join case
-              Math.max(leftStability * maxFreqRightJoinColumn, rightStability * maxFreqLeftJoinColumn)
-            }
+      // Calculate new stability according to elastic sensitivity definition
+      val newStability =
+        if (isSelfJoin)
+          maxFreqLeftJoinColumn * rightStability + maxFreqRightJoinColumn * leftStability + rightStability * leftStability
+        else
+          Math.max(maxFreqRightJoinColumn * leftStability, maxFreqLeftJoinColumn * rightStability)
 
-          // Public table optimization.
-          j.getRight match {
-            case d: TableScan if RelUtils.getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
-              newStaticStability = math.min(newStaticStability, rightStability * maxFreqLeftJoinColumn)
-              optimizationUsed = true
-            case _ => ()
-          }
+      // Print a helpful error message if any metrics are missing (resulting in infinite stability)
+      if (newStability == Double.PositiveInfinity)
+        throw new MissingMetricException()
 
-          j.getLeft match {
-            case d: TableScan if RelUtils.getTableProperties(d).getOrElse("isPublic", "false") equals "true" =>
-              newStaticStability = math.min(newStaticStability, leftStability * maxFreqRightJoinColumn)
-              optimizationUsed = true
-            case _ => ()
-          }
-
-          // Print a helpful error message if metrics are missing (resulting in infinite stability)
-          if (newStaticStability == Double.PositiveInfinity)
-            throw new MissingMetricException()
-
-          List(j.getLeft, j.getRight).flatMap { relation =>
-            val maxFreqOfOtherRelationJoinKey = if (relation eq j.getLeft) maxFreqRightJoinColumn else maxFreqLeftJoinColumn
-            val childState = resultMap(relation)
-
-            childState.map { fact =>
-              fact.copy(
-                optimizationUsed = fact.optimizationUsed || optimizationUsed,
-                stability = newStaticStability,
-                // The max frequency of each column changes by a factor of the max frequency of the join key in the other relation.
-                maxFreq = fact.maxFreq * maxFreqOfOtherRelationJoinKey
-              )
-            }
-          }.toIndexedSeq
-
-        }
-
-        newStates.minBy( _.head.stability )
-
-      case _ => super.joinNode(node, children)
+      ConjunctResult(maxFreqLeftJoinColumn, maxFreqRightJoinColumn, newStability)
     }
+
+    val newNodeState = state.nodeFact.copy(
+      stability = conjunctResults.map{ _.stability }.min
+    )
+
+    /** Update the max frequency for every column by a factor of the max frequency of the join key in the opposing
+      * relation. This models the worst-case situation where each record containing the most-frequent-key is duplicated
+      * this many times by the join.
+      *
+      * By the same reasoning above, if the join contains a conjunction of equijoin clauses it suffices to consider the
+      * one producing the lowest duplication, since each constraint serves only to further decrease the number of join
+      * matches.
+      */
+    val lowestMaxFreqLeft = conjunctResults.map{ _.maxFreqLeftJoinColumn }.min
+    val lowestMaxFreqRight = conjunctResults.map{ _.maxFreqRightJoinColumn }.min
+    val newColState =
+      leftState.colFacts.map { x => x.copy(maxFreq = x.maxFreq * lowestMaxFreqRight) } ++
+      rightState.colFacts.map { x => x.copy(maxFreq = x.maxFreq * lowestMaxFreqLeft) }
+
+    NodeColumnFacts(newNodeState, newColState)
   }
 }
 

@@ -39,7 +39,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
     val root = QueryParser.parseToRelTree(query)
     val analysis = new ElasticSensitivityAnalysis()
     analysis.setK(k)
-    analysis.run(root)
+    analysis.run(root).colFacts
   }
 
   def validateSensitivity(query: String, k: Int, expectedSensitivities: Double*) {
@@ -208,8 +208,8 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       SELECT COUNT(*)
       FROM t1 JOIN recommendations ON t1.customer_id = recommendations.customer_id
     """
-    validateSensitivity(query, 0, 125000.0)
-    validateSensitivity(query, 25, 144375.0)
+    validateSensitivity(query, 0, 75000.0)
+    validateSensitivity(query, 25, 89375.0)
   }
 
   def testSelfJoinSimple() {
@@ -266,7 +266,7 @@ class ElasticSensitivityAnalysisTest extends TestCase {
     List(
       "SELECT COUNT(*)+100 FROM orders",
       "WITH t1 AS (SELECT COUNT(*) as mycount from products) SELECT mycount/100 FROM t1",
-      "WITH t1 AS (SELECT product_id, AVG(quantity) as avg_quantity from orders GROUP BY 1) SELECT COUNT(avg_quantity) FROM t1"
+      "WITH t1 AS (SELECT product_id, COUNT(quantity) as avg_quantity from orders GROUP BY 1) SELECT ROUND(avg_quantity,1) FROM t1"
     ).foreach { assertException(_, classOf[ArithmeticOnAggregationResultException]) }
 
     // don't throw error if arithmetic is applied in ways that don't affect the output column values
@@ -295,8 +295,32 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       FROM orders JOIN products ON orders.product_id = products.product_id
       WHERE orders.product_id = 1
     """
-    validateSensitivity(query, 0, 500.0)
-    validateSensitivity(query, 25, 525.0)
+    validateSensitivity(query, 0, 300.0)
+  }
+
+  def testPublicOnlyQuery() = {
+    // Queries that access *only* public data should produce sensitivity zero (i.e., no noise required)
+    List("""
+      SELECT COUNT(*) FROM products WHERE product_id = 1
+    """, """
+      SELECT COUNT(*)
+      FROM products p1 JOIN products p2 ON p1.product_id = p2.product_id
+    """).foreach { q =>
+      validateSensitivity(q, 0, 0.0)
+      validateSensitivity(q, 10, 0.0)
+    }
+  }
+
+  def testPropagatePublicFlag() {
+    // this test ensures that the public-ness of the products table is propagated through the subquery & filter
+    // nodes so that the optimization can be applied at the join. Previously the flag worked only when the query
+    // joined on root table nodes.
+    val query = """
+      WITH t1 AS (SELECT * from products WHERE product_id = 1)
+      SELECT COUNT(*)
+      FROM orders JOIN t1 ON orders.product_id = t1.product_id
+    """
+    validateSensitivity(query, 0, 300.0)
   }
 
   def testMissingMetric() = {
@@ -315,8 +339,8 @@ class ElasticSensitivityAnalysisTest extends TestCase {
       WITH t1 AS (SELECT customer_id+1 as customer_id FROM customers)
       SELECT COUNT(*) FROM recommendations JOIN t1 ON recommendations.customer_id = t1.customer_id
     """, """
-      WITH _orders AS (SELECT COUNT(*) as product_id FROM orders)
-      SELECT COUNT(*) from _orders JOIN products ON _orders.product_id = products.product_id
+      WITH t1 AS (SELECT COUNT(*) as customer_id FROM orders)
+      SELECT COUNT(*) from t1 JOIN recommendations ON t1.customer_id = recommendations.customer_id
     """
     ).foreach { assertException(_, classOf[MissingMetricException]) }
   }

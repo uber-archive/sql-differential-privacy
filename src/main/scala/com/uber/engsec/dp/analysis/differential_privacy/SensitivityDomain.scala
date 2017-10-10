@@ -24,17 +24,12 @@ package com.uber.engsec.dp.analysis.differential_privacy
 
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
 
-/** Abstract domain element for the elastic sensitivity analysis.
+/** Abstract domain for columns in elastic sensitivity analysis.
   *
   * @param sensitivity Elastic sensitivity for this column. Always an upper bound of local sensitivity.
   *                    This is a floating point lattice with bottom (undefined sensitivity) represented by Option.None,
   *                    top (unbounded sensitivity) represented by Some(Infinity), and partial order defined by max.
-  * @param stability Stability of the *node*. All columns in each node are guaranteed to have the same stability,
-  *                  which is stored as a column fact to simplify analysis implementation. The lattice is defined by the
-  *                  natural ordering.
   * @param maxFreq Max frequency of the column. The lattice is defined by the natural ordering.
-  * @param optimizationUsed Flag to track whether the unique-key or public-table optimization was used on this column
-  *                         (for debugging and experiments)
   * @param aggregationApplied Has an aggregation already been applied to this column?
   * @param postAggregationArithmeticApplied Was a function/operation applied to post-aggregated result? We track this
   *                                         only to print a helpful error message since this results in infinite
@@ -43,42 +38,31 @@ import com.uber.engsec.dp.dataflow.domain.AbstractDomain
   *                    of public tables and columns in private tables explicitly marked with canRelease=true
   *                    (as well as values derived therefrom). This is used to determine whether histogram bin
   *                    columns are safe for release. Boolean lattice with bottom = true and top = false
-  * @param ancestors List of this node's ancestors, used to detect self-joins.
   */
-case class SensitivityInfo(sensitivity: Option[Double],
-                           stability: Double,
-                           maxFreq: Double,
-                           optimizationUsed: Boolean,
-                           aggregationApplied: Boolean,
-                           postAggregationArithmeticApplied: Boolean,
-                           canRelease: Boolean,
-                           ancestors: Set[String]) {
-  override def toString: String = s"sensitivity: $sensitivity, stability: $stability, maxFreq: $maxFreq, optimizationUsed: $optimizationUsed, aggregationApplied: $aggregationApplied, postAggregationArithmeticApplied: $postAggregationArithmeticApplied, canRelease: $canRelease, ancestors: $ancestors"
+case class ColSensitivity(sensitivity: Option[Double],
+                          maxFreq: Double,
+                          aggregationApplied: Boolean,
+                          postAggregationArithmeticApplied: Boolean,
+                          canRelease: Boolean) {
+  override def toString: String = s"sensitivity: $sensitivity, maxFreq: $maxFreq, aggregationApplied: $aggregationApplied, postAggregationArithmeticApplied: $postAggregationArithmeticApplied, canRelease: $canRelease"
 }
 
-/** The abstract for elastic sensitivity analysis is a product lattice with pointwise ordering of the element types
-  * defined above.
+/** The abstract domain is a product lattice with pointwise ordering of the element types defined above.
   */
-object SensitivityDomain extends AbstractDomain[SensitivityInfo] {
-  override val bottom: SensitivityInfo =
-    SensitivityInfo(
-      sensitivity = None,
-      stability = 1.0,
+object SensitivityDomain extends AbstractDomain[ColSensitivity] {
+  override val bottom: ColSensitivity =
+    ColSensitivity(
+      sensitivity = None,  // sensitivity is undefined until aggregations are applied
       maxFreq = 0.0,
-      optimizationUsed = false,
       aggregationApplied = false,
       postAggregationArithmeticApplied = false,
-      canRelease = true,
-      ancestors = Set.empty)
+      canRelease = true)
 
-  override def leastUpperBound(first: SensitivityInfo, second: SensitivityInfo): SensitivityInfo =
-    SensitivityInfo(
+  override def leastUpperBound(first: ColSensitivity, second: ColSensitivity): ColSensitivity =
+    ColSensitivity(
       sensitivity = (first.sensitivity ++ second.sensitivity).reduceLeftOption(math.max),
-      stability = math.max(first.stability, second.stability),
       maxFreq = math.max(first.maxFreq, second.maxFreq),
-      optimizationUsed = first.optimizationUsed || second.optimizationUsed,
       aggregationApplied = first.aggregationApplied || second.aggregationApplied,
       postAggregationArithmeticApplied = first.postAggregationArithmeticApplied || second.postAggregationArithmeticApplied,
-      canRelease = first.canRelease && second.canRelease,
-      ancestors = first.ancestors ++ second.ancestors)
+      canRelease = first.canRelease && second.canRelease)
 }
