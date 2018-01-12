@@ -2,8 +2,9 @@
 databases:
 - database: "my_database"
   dialect: "postgres"
+  namespace: "public"
   tables:
-  - name: "my_table"
+  - table: "my_table"
     columns:
     - name: "col1"
     - name: "col2"
