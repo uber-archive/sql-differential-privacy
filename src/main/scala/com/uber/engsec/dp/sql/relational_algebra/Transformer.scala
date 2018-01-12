@@ -160,7 +160,7 @@ class Transformer(val config: FrameworkConfig) {
 
   def createCatalogReader = {
     val _rootSchema = rootSchema(defaultSchema)
-    new CalciteCatalogReader(CalciteSchema.from(_rootSchema), parserConfig.caseSensitive, CalciteSchema.from(defaultSchema).path(null), typeFactory)
+    new CalciteCatalogReader(CalciteSchema.from(_rootSchema), CalciteSchema.from(defaultSchema).path(null), typeFactory, null)
   }
 
   def rootSchema(schema: SchemaPlus): SchemaPlus = {
