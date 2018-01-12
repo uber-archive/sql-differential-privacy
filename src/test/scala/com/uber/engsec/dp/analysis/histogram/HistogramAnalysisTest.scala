@@ -31,7 +31,7 @@ class HistogramAnalysisTest extends TestCase {
   private def getResults(query: String) = {
     val h = new HistogramAnalysis
     val results = h.analyzeQuery(query)
-    results.toList
+    results.colFacts.toList
   }
 
   def assertHistogramFailure(queryStr: String, errorMsg: String) = {
@@ -49,8 +49,8 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set("public.orders.product_id"), true),
-      AggregationInfo(true, Some(COUNT), Set.empty, false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -61,8 +61,8 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set("public.orders.order_date"), true),
-      AggregationInfo(true, Some(COUNT), Set.empty, false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_date")), true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -74,8 +74,8 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set("public.orders.product_id"), true),
-      AggregationInfo(true, Some(COUNT), Set.empty, false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -86,7 +86,7 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set("public.orders.order_id"), false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_id")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -99,7 +99,7 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(true, Top, Set("public.products.price"), false)
+      AggregationInfo(true, Top, Set(QualifiedColumnName("public.products", "price"), QualifiedColumnName("public.products", "*")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -122,9 +122,9 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(true, COUNT, Set.empty, false),
-      AggregationInfo(true, SUM, Set("public.products.price"), false),
-      AggregationInfo(true, AVG, Set("public.products.price"), false)
+      AggregationInfo(true, COUNT, Set(QualifiedColumnName("public.products", "*")), false),
+      AggregationInfo(true, SUM, Set(QualifiedColumnName("public.products", "price")), false),
+      AggregationInfo(true, AVG, Set(QualifiedColumnName("public.products", "price")), false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)

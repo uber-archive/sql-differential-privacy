@@ -22,16 +22,19 @@
 
 package com.uber.engsec.dp.analysis.taint
 
-import com.uber.engsec.dp.dataflow.column.RelColumnAnalysis
-import com.uber.engsec.dp.dataflow.domain.BooleanDomain
+import com.uber.engsec.dp.dataflow.column.{NodeColumnFacts, RelNodeColumnAnalysis}
+import com.uber.engsec.dp.dataflow.domain.{BooleanDomain, UnitDomain}
 import com.uber.engsec.dp.sql.relational_algebra.RelUtils
 import org.apache.calcite.rel.core.TableScan
 
 /** Returns true for each output column that is derived from a column marked as tainted (isTaint=true in the schema config).
   */
-class TaintAnalysis extends RelColumnAnalysis(BooleanDomain) {
-  override def transferTableScan(node: TableScan, idx: Int, state: Boolean): Boolean = {
-    val isTainted = RelUtils.getColumnProperties(node, idx).get("isTainted").fold(false)(_.toBoolean)
-    isTainted
-  }
+class TaintAnalysis extends RelNodeColumnAnalysis(UnitDomain, BooleanDomain) {
+
+  override def transferTableScan(node: TableScan, state: NodeColumnFacts[Unit, Boolean]) = NodeColumnFacts(
+    UnitDomain.bottom,
+    state.colFacts.zipWithIndex.map { case (colState, idx) =>
+      val isTainted = RelUtils.getColumnProperties(node, idx).get("isTainted").fold(false)(_.toBoolean)
+      isTainted
+    })
 }

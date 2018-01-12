@@ -21,13 +21,13 @@
  */
 package com.uber.engsec.dp.dataflow.column
 
-import com.uber.engsec.dp.dataflow.{AbstractDataflowAnalysis, AggFunctions}
 import com.uber.engsec.dp.dataflow.AggFunctions._
 import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
+import com.uber.engsec.dp.dataflow.{AbstractDataflowAnalysis, AggFunctions}
 import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, RelTreeFunctions, Relation}
-import org.apache.calcite.rel.{BiRel, RelNode, SingleRel}
 import org.apache.calcite.rel.core._
+import org.apache.calcite.rel.{BiRel, RelNode, SingleRel}
 import org.apache.calcite.rex.{RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlKind
 import org.apache.calcite.sql.fun._
@@ -37,26 +37,31 @@ import scala.collection.mutable
 /** An analysis that tracks facts in tandem for both nodes and columns (e.g., where node-level facts
   * inform analysis logic for columns, or vice-versa).
   */
-class RelNodeColumnAnalysis[E, F, T <: AbstractDomain[E], U <: AbstractDomain[F]](nodeDomain: AbstractDomain[F], colDomain: AbstractDomain[E])
+class RelNodeColumnAnalysis[N,C](nodeDomain: AbstractDomain[N], colDomain: AbstractDomain[C])
   // extends AbstractColumnAnalysis[RelOrExpr, E, T]
-  extends AbstractDataflowAnalysis[RelOrExpr, NodeColumnFacts[F,E]]
-  with RelNodeColumnAnalysisFunctions[F,E]
+  extends AbstractDataflowAnalysis[RelOrExpr, NodeColumnFacts[N,C]]
+  with RelNodeColumnAnalysisFunctions[N,C]
   with RelTreeFunctions {
 
   // Use a regular hashmap for results (instead of IdentityHashMap)
-  override val resultMap: mutable.HashMap[RelOrExpr, NodeColumnFacts[F,E]] = mutable.HashMap()
+  override val resultMap: mutable.HashMap[RelOrExpr, NodeColumnFacts[N,C]] = mutable.HashMap()
 
-  override def transferNode(node: RelOrExpr, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = {
+  override def transferNode(node: RelOrExpr, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = {
     val (colState, nodeState) = (state.colFacts, state.nodeFact)
     node match {
       case Relation(rel) =>
         assert (colState.length == rel.getRowType.getFieldCount)
         rel match {
           case t: TableScan => transferTableScan(t, state)
+          case v: Values => transferValues(v, state)
           case j: Join => transferJoin(j, state)
           case f: Filter => transferFilter(f, state)
           case s: Sort => transferSort(s, state)
           case p: Project => transferProject(p, state)
+          case u: Union => transferUnion(u, state)
+          case m: Minus => transferMinus(m, state)
+          case c: Correlate => transferCorrelate(c, state)
+          case i: Intersect => transferIntersect(i, state)
           case a: Aggregate =>
             val aggFunctions: IndexedSeq[Option[AggFunctions.AggFunction]] = colState.zipWithIndex.map { case (fact, idx) =>
               if (idx < a.getGroupCount) { // grouped columns are always the leading fields
@@ -72,6 +77,7 @@ class RelNodeColumnAnalysis[E, F, T <: AbstractDomain[E], U <: AbstractDomain[F]
                   case _: SqlSumEmptyIsZeroAggFunction => SUM
                   case m: SqlMinMaxAggFunction if m.getKind == SqlKind.MIN => MIN
                   case m: SqlMinMaxAggFunction if m.getKind == SqlKind.MAX => MAX
+                  case _: SqlSingleValueAggFunction => SINGLE_VALUE
                 }
                 Some(agg)
               }
@@ -106,12 +112,17 @@ class RelNodeColumnAnalysis[E, F, T <: AbstractDomain[E], U <: AbstractDomain[F]
     }
   }
 
-  override def joinNode(node: RelOrExpr, children: Iterable[RelOrExpr]): NodeColumnFacts[F,E] = {
+  override def joinNode(node: RelOrExpr, children: Iterable[RelOrExpr]): NodeColumnFacts[N,C] = {
     import scala.collection.JavaConverters._
 
     node match {
       case Relation(t: TableScan) =>
         val colFacts = IndexedSeq.fill(t.getRowType.getFieldCount)(colDomain.bottom)
+        val nodeFact = nodeDomain.bottom
+        NodeColumnFacts(nodeFact, colFacts)
+
+      case Relation(v: Values) =>
+        val colFacts = IndexedSeq.fill(v.getRowType.getFieldCount)(colDomain.bottom)
         val nodeFact = nodeDomain.bottom
         NodeColumnFacts(nodeFact, colFacts)
 
@@ -150,11 +161,18 @@ class RelNodeColumnAnalysis[E, F, T <: AbstractDomain[E], U <: AbstractDomain[F]
       case Relation(s: Sort) =>
         resultMap(Relation(s.getInput))
 
-      case Relation(j: Join) =>
-        val leftResult = resultMap(j.getLeft)
+      case Relation(u: SetOp) => // Union, Minus, etc.
+        val inputFacts = u.getInputs.asScala.map{ resultMap(_) }
+        val newNodeFact = AbstractColumnAnalysis.joinFacts(nodeDomain, inputFacts.map{ _.nodeFact })
+        // Join column facts of corresponding columns from all children
+        val newColFacts = inputFacts.map{ _.colFacts }.transpose.map{ _.reduce( (x,y) => colDomain.leastUpperBound(x, y) )}
+        NodeColumnFacts(newNodeFact, newColFacts.toIndexedSeq)
+
+      case Relation(b: BiRel) => // Join, Correlate, etc.
+        val leftResult = resultMap(b.getLeft)
         val (leftColFacts, leftNodeFact) = (leftResult.colFacts, leftResult.nodeFact)
 
-        val rightResult = resultMap(j.getRight)
+        val rightResult = resultMap(b.getRight)
         val (rightColFacts, rightNodeFact) = (rightResult.colFacts, rightResult.nodeFact)
 
         NodeColumnFacts(nodeDomain.leastUpperBound(leftNodeFact, rightNodeFact), leftColFacts ++ rightColFacts)
@@ -189,16 +207,21 @@ class RelNodeColumnAnalysis[E, F, T <: AbstractDomain[E], U <: AbstractDomain[F]
 }
 
 /** Wrapper object to pair node facts with column facts */
-case class NodeColumnFacts[F,E](nodeFact: F, colFacts: ColumnFacts[E])
+case class NodeColumnFacts[N,C](nodeFact: N, colFacts: ColumnFacts[C])
 
 /** Subclasses may override any of these methods as appropriate. */
-trait RelNodeColumnAnalysisFunctions[F,E] {
+trait RelNodeColumnAnalysisFunctions[N,C] {
   /** If aggFunction is None, the current column is a grouped column. */
-  def transferAggregate(node: Aggregate, aggFunctions: IndexedSeq[Option[AggFunction]], state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferTableScan(node: TableScan, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferJoin(node: Join, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferFilter(node: Filter, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferSort(node: Sort, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferProject(node: Project, state: NodeColumnFacts[F,E]): NodeColumnFacts[F,E] = state
-  def transferExpression(node: RexNode, state: E): E = state
+  def transferAggregate(node: Aggregate, aggFunctions: IndexedSeq[Option[AggFunction]], state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferTableScan(node: TableScan, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferValues(node: Values, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferJoin(node: Join, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferFilter(node: Filter, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferSort(node: Sort, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferProject(node: Project, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferUnion(node: Union, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferMinus(node: Minus, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferIntersect(node: Intersect, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferCorrelate(node: Correlate, state: NodeColumnFacts[N,C]): NodeColumnFacts[N,C] = state
+  def transferExpression(node: RexNode, state: C): C = state
 }

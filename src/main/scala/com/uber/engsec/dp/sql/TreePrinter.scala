@@ -31,7 +31,7 @@ import com.uber.engsec.dp.sql.dataflow_graph.{Node => DFGNode}
 import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, Relation}
 import com.uber.engsec.dp.util.IdentityHashMap
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.{Aggregate, Filter, Project, Sort, TableScan, Join => RelJoin}
+import org.apache.calcite.rel.core.{Aggregate, Correlate, Filter, Project, Sort, TableScan, Values, Join => RelJoin, Union => RelUnion}
 import org.apache.calcite.rex._
 
 import scala.collection.{MapLike, mutable}
@@ -103,23 +103,43 @@ object TreePrinter {
           case p: Project =>
             currentInputNode = Some(p.getInput)
             ("Project", p.getProjects.asScala.zipWithIndex.map{ case (node, idx) => LabeledNode(Some(s"$idx [as ${colNames(idx)}]"), Expression(node)) }.toList ++ List(LabeledNode(Some("input"), Relation(p.getInput))))
+
           case t: TableScan =>
             ("TableScan[" + t.getTable.getQualifiedName.asScala.mkString(".") + "]", Nil)
+
           case a: Aggregate =>
-            ("Aggregate[" + a.getAggCallList.asScala.mkString(",") + "] groupSets:" + a.groupSets.asScala.map{ _.toList.toString }.mkString(", "), List(LabeledNode(Some("input"), Relation(a.getInput))))
+            ("Aggregate[" + a.getAggCallList.asScala.mkString(",") + "] grouped:" + a.getGroupSet.asList.asScala.mkString(",") + " groupSets:" + a.groupSets.asScala.map{ _.toList.toString }.mkString(", "), List(LabeledNode(Some("input"), Relation(a.getInput))))
+
           case f: Filter =>
+            currentInputNode = Some(f.getInput)
             ("Filter",
               LabeledNode(Some("condition"), Expression(f.getCondition))
               :: LabeledNode(Some("input"), Relation(f.getInput()))
               :: Nil)
+
           case j: RelJoin =>
+            currentInputNode = Some(j)
             ("Join[" + j.getJoinType.toString + "]",
               LabeledNode(Some("condition"), Expression(j.getCondition))
               :: LabeledNode(Some("left"), Relation(j.getLeft))
               :: LabeledNode(Some("right"), Relation(j.getRight))
               :: Nil)
+
           case s: Sort =>
             ("Sort[" + s.collation.getFieldCollations.asScala.map{ col => s"${col.getFieldIndex} ${col.direction.shortString}" }.mkString(", ") + "]", List(LabeledNode(Some("input"), Relation(s.getInput))))
+
+          case u: RelUnion =>
+            ("Union", u.getInputs.asScala.zipWithIndex.map { case (rel,idx) => LabeledNode(Some(s"input${idx}"), Relation(rel)) })
+
+          case v: Values =>
+            ("Values" + v.tuples.asScala.mkString, Nil)
+
+          case c: Correlate =>
+            ("Correlate[" + c.getJoinType.toString + "]",
+              LabeledNode(Some("left"), Relation(c.getLeft))
+              :: LabeledNode(Some("right"), Relation(c.getRight))
+              :: Nil)
+
           case _ =>
             // ("??? (" + rel.getClass.getSimpleName + ")", rel.getChildExps.asScala.map { x => ("? expr", Expression(x) ) } ++ rel.getInputs.asScala.map { x => ("? rel", Relation(x) ) })
             throw new RuntimeException(s"Unrecognized relational node type: ${rel.getClass.toString})")
@@ -134,7 +154,7 @@ object TreePrinter {
           case rexSlot: RexSlot =>
             (rexSlot.getClass.getSimpleName.substring(3) + ": " + rexSlot.getIndex.toString, Nil)
           case rexLiteral: RexLiteral =>
-            ("Literal[" + rexLiteral.getTypeName.toString + "]: " + rexLiteral.getValue.toString, Nil)
+            ("Literal[" + rexLiteral.getTypeName.toString + "]: " + (if (rexLiteral.isNull) "null" else rexLiteral.getValue.toString), Nil)
           case _ =>
             ("UNIMPLEMENTED: " + ex.getClass.getSimpleName.toString + " (" + ex.getKind.toString + ")" , Nil)
         }

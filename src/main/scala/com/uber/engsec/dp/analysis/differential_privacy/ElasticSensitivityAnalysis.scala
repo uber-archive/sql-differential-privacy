@@ -45,26 +45,31 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   var k: Int = 0
   val checkBinsForRelease: Boolean = System.getProperty("dp.check_bins", "true").toBoolean
 
-  /** Reject non-statistical queries before analysis begins. */
-  override def run(root: RelOrExpr): NodeColumnFacts[RelStability,ColSensitivity] = {
+  override def run(_root: RelOrExpr): NodeColumnFacts[RelStability,ColSensitivity] = {
+    /** Push predicates into joins, in order to support queries with equijoin conditions specified in filters
+      * (e.g., SELECT a JOIN b WHERE a.x = b.x, which is semantically equivalent to SELECT a JOIN b ON a.x = b.x)
+      */
+    val root = RelUtils.pushFiltersOnJoins(_root.unwrap.asInstanceOf[RelNode])
+
+    /** Reject non-statistical and non-counting queries. */
     val histogramResults = new HistogramAnalysis().run(root)
     val queryType = QueryType.getQueryType(histogramResults)
 
-    if ((queryType != QueryType.HISTOGRAM && queryType != QueryType.NON_HISTOGRAM_STATISTICAL) ||
-      histogramResults.filter {
-        _.isAggregation
-      }.exists {
-        _.outermostAggregation.get != COUNT
-      })
-      throw new UnsupportedQueryException("This analysis currently works only on statistical and histogram counting queries")
+    val isQuerySupported =
+      Set(QueryType.HISTOGRAM, QueryType.NON_HISTOGRAM_STATISTICAL).contains(queryType) &&
+      histogramResults.colFacts.filter(_.isAggregation).forall(_.outermostAggregation.contains(COUNT))
 
+    if (!isQuerySupported) throw new UnsupportedQueryException("This analysis works only on counting queries")
+
+    /** Run the analysis. */
     val results = super.run(root)
 
-    // Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
-    // (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently support.
+    /** Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
+      * (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently support.
+      */
     val idx = results.colFacts.indexWhere { col => col.sensitivity.contains(Double.PositiveInfinity) && col.postAggregationArithmeticApplied }
     if (idx != -1) {
-      val colName = root.unwrap.asInstanceOf[RelNode].getRowType.getFieldNames.get(idx)
+      val colName = root.getRowType.getFieldNames.get(idx)
       throw new ArithmeticOnAggregationResultException(colName)
     }
 
@@ -133,6 +138,7 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
       // Fetch metadata for this column
       val colName = node.getRowType.getFieldNames.get(idx)
       val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
+
       val colMaxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble)
       val maxFreqAtK = if (isTablePublic) colMaxFreq else (colMaxFreq + k)
       val canRelease = colProperties.get("canRelease").fold(false)(_.toBoolean) || isTablePublic
@@ -152,7 +158,7 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
         * fall out (see stability calculation in transferJoin). Additionally, it ensures that counting queries on
         * only-public data will produce sensitivity of zero (i.e., no noise) without requiring any additional logic.
         *
-        * Note that max column frequencies are always updated at joins regardless of public-ness.
+        * Note column frequencies are always updated at joins, even for public tables.
         */
       stability = if (isTablePublic) 0.0 else 1.0,
       ancestors = Set(tableName)
@@ -162,7 +168,6 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   }
 
   override def transferExpression(node: RexNode, state: ColSensitivity): ColSensitivity = {
-
     node match {
       case c: RexCall =>
         // Equality and cast expressions should not trigger post aggregation arithmetic exceptions
@@ -266,7 +271,7 @@ class ProtectedBinException(binName: String) extends UnsupportedQueryException(
   s"This query returns a histogram bin column ('$binName') that is not safe for release. " +
     "The bin labels must be made differentially private, which requires additional data model knowledge. " +
     "If you know what you're doing, you can disable this message by setting canRelease=true for columns of protected " +
-    " tables that are safe for release, or setting flag -Ddp.check_bins=false to disable this check entirely."
+    "tables that are safe for release, or setting flag -Ddp.check_bins=false to disable this check entirely."
 )
 
 /** Thrown if operations/functions were applied to post-aggregated values; this check is not needed for soundness of the

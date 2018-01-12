@@ -24,7 +24,7 @@ package com.uber.engsec.dp.sql.relational_algebra
 
 import com.uber.engsec.dp.sql.{AbstractAnalysis, QueryParser, TreeFunctions, TreePrinter}
 import org.apache.calcite.rel.core._
-import org.apache.calcite.rex.{RexCall, RexInputRef, RexLiteral}
+import org.apache.calcite.rex._
 
 import scala.collection.JavaConverters._
 
@@ -47,11 +47,17 @@ object RelTreeFunctions {
     case Relation(a: Aggregate) => List(a.getInput)
     case Relation(t: TableScan) => Nil
     case Relation(j: Join) => j.getInputs.asScala.map{Relation} ++ List(Expression(j.getCondition))
+    case Relation(c: Correlate) => c.getInputs.asScala.map{Relation}
     case Relation(f: Filter) => Relation(f.getInput) :: Expression(f.getCondition) :: Nil
     case Relation(s: Sort) => (Relation(s.getInput) :: Expression(s.fetch) :: Expression(s.offset) :: Nil).filter{ _.unwrap != null }
+    case Relation(v: Values) => Nil
+    case Relation(u: SetOp) => u.getInputs.asScala.map{Relation}
+
     case Expression(c: RexCall) => c.operands.asScala
     case Expression(i: RexInputRef) => Nil
     case Expression(l: RexLiteral) => Nil
+    case Expression(f: RexFieldAccess) => List(f.getReferenceExpr)
+    case Expression(c: RexCorrelVariable) => Nil
     case Expression(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
     case Relation(e) => throw new RuntimeException("Unimplemented: " + e.getClass.getSimpleName)
   }

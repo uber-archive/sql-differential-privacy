@@ -22,13 +22,12 @@
 
 package com.uber.engsec.dp.sql.relational_algebra
 
-import java.io.{PrintWriter, StringWriter}
-
 import com.uber.engsec.dp.schema.Schema
+import org.apache.calcite.plan.hep.{HepPlanner, HepProgram}
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Join, TableScan}
-import org.apache.calcite.rel.externalize.RelJsonWriter
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter
+import org.apache.calcite.rel.rules.FilterJoinRule
 import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
 import org.apache.calcite.sql.SqlDialect.DatabaseProduct
 import org.apache.calcite.sql.SqlKind
@@ -75,22 +74,32 @@ object RelUtils {
     }
   }
 
-  /** Returns a JSON representation of the given relational algebra tree.
-    */
-  def relToJson(rel: RelNode): String = {
-    val pw = new PrintWriter(new StringWriter)
-    val writer = new RelJsonWriter
-
-    rel.explain(writer)
-    writer.asString
-  }
-
   /** Converts the given relational algebra tree to a SQL string.
     */
   def relToSql(rel: RelNode): String = {
-    val dialect = DatabaseProduct.valueOf(Schema.currentDb.dialect.toUpperCase).getDialect
+    val configDialect = Schema.currentDb.dialect
+    if (configDialect == null)
+      throw new IllegalArgumentException("Dialect must be specified in schema config file.")
+
+    val dialect = DatabaseProduct.valueOf(configDialect.toUpperCase).getDialect
     val converter = new RelToSqlConverter(dialect)
     converter.visitChild(0, rel).asStatement.toSqlString(dialect).getSql
+  }
+
+  /** Returns a new tree with filter predicates pushed down into join nodes (where possible).
+    * For example, the tree representing the following query:
+    *
+    *   SELECT * FROM a JOIN b WHERE a.x = b.x
+    *
+    * would be transformed into:
+    *
+    *   SELECT * FROM a JOIN b ON a.x = b.x
+    */
+  def pushFiltersOnJoins(rel: RelNode): RelNode = {
+    val program = HepProgram.builder.addRuleInstance(FilterJoinRule.FILTER_ON_JOIN).build
+    val optPlanner = new HepPlanner(program)
+    optPlanner.setRoot(rel)
+    optPlanner.findBestExp
   }
 
   /******************************************************************************************************************
@@ -116,11 +125,4 @@ object RelUtils {
     Schema.getSchemaMapForTable(tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
   }
 
-  /** Returns the fully qualified table and column name. */
-  def getQualifiedColumnName(table: TableScan, colIdx: Int): String = {
-    import scala.collection.JavaConverters._
-    val tableName = table.getTable.getQualifiedName.asScala.mkString(".")
-    val colName = table.getRowType.getFieldNames.get(colIdx)
-    s"$tableName.$colName"
-  }
 }

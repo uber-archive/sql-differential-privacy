@@ -22,7 +22,6 @@
 
 package com.uber.engsec.dp.analysis.histogram
 
-import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import org.apache.calcite.rel.RelNode
 
 /** Classification of queries: histogram, non-histogram statistical, and raw data. */
@@ -36,12 +35,12 @@ object QueryType extends Enumeration {
     * @param results A set of column facts representing the results of a histogram analysis
     * @return The type of the query: histogram, non-histogram statistical, or raw data
     */
-  def getQueryType(results: ColumnFacts[AggregationInfo]): QueryType = {
+  def getQueryType(results: HistogramAnalysis#ResultType): QueryType = {
     var groupedColumns = 0
     var nonGroupedAggregations = 0
     var rawColumns = 0
 
-    results.foreach { info =>
+    results.colFacts.foreach { info =>
       if (info.isGroupBy)
         groupedColumns += 1
 
@@ -57,7 +56,7 @@ object QueryType extends Enumeration {
       QueryType.HISTOGRAM
 
     // A statistical query has every column aggregated.
-    else if (nonGroupedAggregations == results.size)
+    else if (nonGroupedAggregations == results.colFacts.size)
       QueryType.NON_HISTOGRAM_STATISTICAL
 
     // Everything else is "raw data"

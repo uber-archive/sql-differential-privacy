@@ -23,38 +23,52 @@
 package com.uber.engsec.dp.analysis.histogram
 
 import com.uber.engsec.dp.dataflow.AggFunctions._
-import com.uber.engsec.dp.dataflow.column.RelColumnAnalysis
+import com.uber.engsec.dp.dataflow.column.{NodeColumnFacts, RelNodeColumnAnalysis}
 import com.uber.engsec.dp.dataflow.domain._
 import com.uber.engsec.dp.dataflow.domain.lattice.FlatLatticeDomain
-import com.uber.engsec.dp.sql.relational_algebra.RelUtils
 import org.apache.calcite.rel.core.{Aggregate, TableScan}
 
 /** Returns the aggregation status of each output column of a query. The results of this analysis are used to classify
   * queries as statistical or raw data and to determine which columns contain aggregations.
   */
-class HistogramAnalysis extends RelColumnAnalysis(AggregationDomain) {
+class HistogramAnalysis extends RelNodeColumnAnalysis(UnitDomain, AggregationDomain) {
 
-  override def transferAggregate(node: Aggregate, idx: Int, aggFunction: Option[AggFunction], state: AggregationInfo): AggregationInfo = {
-    if (aggFunction.isEmpty) // grouped column
-      state.copy(isGroupBy=true)
-    else {
-      val newReferences: Set[String] = aggFunction.get match {
-        case COUNT => Set.empty
-        case _ => state.references
+  override def transferAggregate(node: Aggregate, aggFunctions: IndexedSeq[Option[AggFunction]], state: NodeColumnFacts[Unit, AggregationInfo]) = {
+    val newColFacts = state.colFacts.zipWithIndex.map { case (state, idx) =>
+      val aggFunction = aggFunctions(idx)
+
+      if (aggFunction.isEmpty) // grouped column
+        state.copy(isGroupBy = true)
+      else {
+        val newReferences: Set[QualifiedColumnName] = aggFunction.get match {
+          case COUNT => state.references.map{ _.table }.toList.distinct.map{ QualifiedColumnName(_, "*") }.toSet
+          case _ => state.references
+        }
+
+        AggregationInfo(
+          isAggregation = true,
+          outermostAggregation = aggFunction,
+          references = newReferences,
+          isGroupBy = false
+        )
       }
-
-      AggregationInfo(
-        isAggregation = true,
-        outermostAggregation = aggFunction,
-        references = newReferences,
-        isGroupBy = false
-      )
     }
+
+    NodeColumnFacts(UnitDomain.bottom, newColFacts)
   }
 
-  override def transferTableScan(node: TableScan, idx: Int, state: AggregationInfo): AggregationInfo = {
-    val qualifiedColName = RelUtils.getQualifiedColumnName(node, idx)
-    state.copy(references=Set(qualifiedColName))
+  override def transferTableScan(node: TableScan, state: NodeColumnFacts[Unit, AggregationInfo]) = {
+    import scala.collection.JavaConverters._
+
+    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
+    val colNames = node.getRowType.getFieldNames.asScala
+
+    val newColFacts = state.colFacts.zip(colNames).map { case (state, colName) =>
+      val qualifiedColName = QualifiedColumnName(tableName, colName)
+      state.copy(references = Set(qualifiedColName))
+    }
+
+    NodeColumnFacts(UnitDomain.bottom, newColFacts)
   }
 }
 
@@ -67,9 +81,8 @@ class HistogramAnalysis extends RelColumnAnalysis(AggregationDomain) {
   */
 case class AggregationInfo(isAggregation: Boolean,
                            outermostAggregation: DomainElem[AggFunction],
-                           references: Set[String],
+                           references: Set[QualifiedColumnName],
                            isGroupBy: Boolean)
-
 
 object AggregationDomain extends AbstractDomain[AggregationInfo] {
   override val bottom: AggregationInfo = AggregationInfo(false, FlatLatticeDomain.bottom, Set.empty, false)
@@ -84,3 +97,4 @@ object AggregationDomain extends AbstractDomain[AggregationInfo] {
   }
 }
 
+case class QualifiedColumnName(table: String, column: String)

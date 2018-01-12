@@ -32,3 +32,21 @@ object BooleanDomain extends AbstractDomain[Boolean] {
   override val bottom: Boolean = false
   override def leastUpperBound(first: Boolean, second: Boolean): Boolean = first || second
 }
+
+/** An abstract domain representing an optional *fixed* value, where bottom is None. This lattice has no top element;
+  * only one element value may be stored. */
+class OptionDomain[T] extends AbstractDomain[Option[T]] {
+  override val bottom: Option[T] = Option.empty
+  override def leastUpperBound(first: Option[T], second: Option[T]): Option[T] = {
+    if (first.equals(second))
+      first
+    else
+      throw new java.util.NoSuchElementException("OptionDomain.leastUpperBound with different element values")
+  }
+}
+
+/** The void domain, storing nothing */
+object UnitDomain extends AbstractDomain[Unit] {
+  override val bottom: Unit = ()
+  override def leastUpperBound(a: Unit, b: Unit): Unit = bottom
+}

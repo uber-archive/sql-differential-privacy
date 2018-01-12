@@ -34,7 +34,7 @@ import junit.framework.TestCase
 class TaintAnalysisTest extends TestCase {
   private def getResults(query: String) = {
     val root = QueryParser.parseToRelTree(query)
-    new TaintAnalysis().run(root).toList
+    new TaintAnalysis().run(root).colFacts.toList
   }
 
   def testSimple() = {

@@ -36,7 +36,8 @@ import scala.collection.mutable
   */
 abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
 
-  type FactType
+  /** Allows code to symbolically reference return type of an analysis (e.g., HistogramAnalysis#ResultType) */
+  type ResultType = T
 
   /******************************************************************************************************************
    * Public methods for analysis callers.
