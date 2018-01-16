@@ -1,10 +1,11 @@
 ---
 databases:
 - database: "test"
-  dialect: "vertica"
+  dialect: "hive"
   namespace: "public"
   tables:
   - table: "orders"
+    approxRowCount: 1000000
     columns:
     - name: "order_id"
       maxFreq: 1
@@ -16,6 +17,7 @@ databases:
       maxFreq: 500
       canRelease: true
     - name: "quantity"
+    - name: "order_cost"
   - table: "products"
     isPublic: true
     columns:

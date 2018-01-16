@@ -155,7 +155,7 @@ class TreeTransformationTest extends TestCase {
               .arg0
               ├─> UnstructuredReference[literal('DAY')]
               .arg1
-              └─> ColumnReference[5]
+              └─> ColumnReference[6]
                   .of
                   └─> DataTable["orders"]
       """
@@ -364,7 +364,7 @@ class TreeTransformationTest extends TestCase {
               .of
               └─> Select
                   .0 [as name]
-                  ├─> ColumnReference[6]
+                  ├─> ColumnReference[7]
                   │   .of
                   │   └─> Join[LEFT]
                   │       .left
@@ -496,7 +496,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> Join[CROSS]
                   .left
@@ -518,7 +518,11 @@ class TreeTransformationTest extends TestCase {
                   │   │   .of
                   │   │   └─> DataTable["orders"]
                   │   .4 [as quantity]
-                  │   └─> ColumnReference[4]
+                  │   ├─> ColumnReference[4]
+                  │   │   .of
+                  │   │   └─> DataTable["orders"]
+                  │   .5 [as order_cost]
+                  │   └─> ColumnReference[5]
                   │       .of
                   │       └─> DataTable["orders"]
                   .right
@@ -815,7 +819,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> Join[INNER]
                   .left
@@ -877,7 +881,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> Join[CROSS]
                   .left
@@ -898,7 +902,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as customer_id]
-          └─> ColumnReference[8]
+          └─> ColumnReference[9]
               .of
               └─> Join[CROSS]
                   .left
@@ -940,7 +944,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> Join[CROSS]
                   .left
@@ -961,7 +965,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as customer_id]
-          └─> ColumnReference[8]
+          └─> ColumnReference[9]
               .of
               └─> Join[CROSS]
                   .left
@@ -1122,7 +1126,7 @@ class TreeTransformationTest extends TestCase {
           │       .right
           │       └─> DataTable["products"]
           .1 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> ... (Join[CROSS])
       """
@@ -1144,7 +1148,7 @@ class TreeTransformationTest extends TestCase {
           │       .right
           │       └─> DataTable["products"]
           .1 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> ... (Join[CROSS])
       """
@@ -1157,7 +1161,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as name]
-          └─> ColumnReference[6]
+          └─> ColumnReference[7]
               .of
               └─> Join[LEFT]
                   .left
@@ -1184,7 +1188,7 @@ class TreeTransformationTest extends TestCase {
     val tree = """
       ─> Select
           .0 [as product_id]
-          └─> ColumnReference[5]
+          └─> ColumnReference[6]
               .of
               └─> Join[RIGHT]
                   .left
@@ -1404,7 +1408,7 @@ class TreeTransformationTest extends TestCase {
           │               .of
           │               └─> DataTable["customers"]
           .1 [as customer_id]
-          ├─> ColumnReference[5]
+          ├─> ColumnReference[6]
           │   .of
           │   └─> ... (Join[INNER])
           .2 [as count]
@@ -1414,7 +1418,7 @@ class TreeTransformationTest extends TestCase {
           │       .arg0
           │       └─> ... (Join[INNER])
           .groupBy
-          ├─> ... (ColumnReference[5])
+          ├─> ... (ColumnReference[6])
           .groupBy
           └─> ... (ColumnReference[0])
       """

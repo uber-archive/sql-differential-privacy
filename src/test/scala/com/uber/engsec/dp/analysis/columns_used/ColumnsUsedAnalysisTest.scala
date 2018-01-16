@@ -35,12 +35,12 @@ class ColumnsUsedAnalysisTest extends TestCase {
 
   def testSelectAll() = {
     val query = "SELECT * FROM orders"
-    checkResult(query, List(Set("orders.order_id"), Set("orders.order_date"), Set("orders.customer_id"), Set("orders.product_id"), Set("orders.quantity")))
+    checkResult(query, List(Set("orders.order_id"), Set("orders.order_date"), Set("orders.customer_id"), Set("orders.product_id"), Set("orders.quantity"), Set("orders.order_cost")))
   }
 
   def testCountAll() = {
     val query = "SELECT count(*) FROM orders"
-    checkResult(query, List(Set("orders.order_id", "orders.product_id", "orders.order_date", "orders.customer_id", "orders.quantity")))
+    checkResult(query, List(Set("orders.order_cost", "orders.order_id", "orders.product_id", "orders.order_date", "orders.customer_id", "orders.quantity")))
   }
 
   def testWithoutWhere() = {
