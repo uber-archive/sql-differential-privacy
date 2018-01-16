@@ -1,17 +1,15 @@
 # Overview
 
-This repository contains a full implementation of a differential privacy mechanism for SQL queries using elastic sensitivity,
-including the SQL analysis framework used to build it.
+This repository contains a query analysis and rewriting framework to enforce differential privacy for general-purpose
+SQL queries. The rewriting engine can automatically transform an input query into an *intrinsically private query* which
+embeds a differential privacy mechanism in the query directly; the transformed query enforces differential privacy on
+its results and can be executed on any standard SQL database. This approach supports many state-of-the-art
+differential privacy mechanisms; the code currently includes rewriters based on [Elastic Sensitivity](https://arxiv.org/abs/1706.09479) and
+[Sample and Aggregate](http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.296.2379&rep=rep1&type=pdf), and more will be added soon.
 
-
-Elastic sensitivity is an approach for efficiently approximating the local sensitivity of a query, which can be used to
-enforce differential privacy for the query. The approach requires only a static analysis of the query and therefore
-imposes minimal performance overhead. Importantly, it does not require any changes to the database.
-Details of the approach are available in [this paper](https://arxiv.org/abs/1706.09479).
-
-The framework for implementing elastic sensitivity is designed to perform dataflow analyses over complex SQL queries.
-It provides an abstract representation of queries, plus several kinds of built-in dataflow analyses tailored to this
-representation. This framework can be used to implement other types of dataflow analyses and will soon support additional differential privacy mechanisms for SQL.
+The rewriting framework is built on a robust dataflow analyses engine for SQL queries. This framework
+provides an abstract representation of queries, plus several kinds of built-in dataflow analyses tailored to this
+representation. This framework can be used to implement other types of dataflow analyses, as described below.
 
 ## Building & Running
 
@@ -21,7 +19,22 @@ This framework is written in Scala and built using Maven. To build the code:
 $ mvn package
 ```
 
-## Example: Differential Privacy using Elastic Sensitivity
+## Example: Query Rewriting
+
+The file `examples/QueryRewritingExample.scala` contains sample code for query rewriting and demonstrates the supported
+mechanisms using a few simple queries. To run this example:
+```
+mvn exec:java -Dexec.mainClass="examples.QueryRewritingExample"
+```
+
+This example code can be easily modified, e.g., to test different queries or change parameter values.
+
+## Background: Elastic Sensitivity
+
+Elastic sensitivity is an approach for efficiently approximating the local sensitivity of a query, which can be used to
+enforce differential privacy for the query. The approach requires only a static analysis of the query and therefore
+imposes minimal performance overhead. Importantly, it does not require any changes to the database.
+Details of the approach are available in [this paper](https://arxiv.org/abs/1706.09479).
 
 Elastic sensitivity can be used to determine the scale of random noise necessary to make the results of a query
 differentially private. For a given output column of a query with elastic sensitivity *s*, to achieve
@@ -29,11 +42,11 @@ differential privacy for that column it suffices to *smooth* *s* according to th
 *S*, then add random noise drawn from the Laplace distribution, scaled to *(S/epsilon)* and centered at 0, to the true
 result of the query. The smoothing can be accomplished using the smooth sensitivity approach introduced by [Nissim et al](http://www.cse.psu.edu/~ads22/pubs/NRS07/NRS07-full-draft-v1.pdf).
 
-Example code demonstrating this approach is available in `com.uber.engsec.dp.util.DPExample`.
+The file `examples.ElasticSensitivityExample` contains code demonstrating this approach directly (i.e., applying noise manually rather than generating an intrinsically private query).
 
 To run this example:
 ```
-mvn exec:java -Dexec.mainClass="com.uber.engsec.dp.util.DPExample"
+mvn exec:java -Dexec.mainClass="examples.ElasticSensitivityExample"
 ```
 
  
