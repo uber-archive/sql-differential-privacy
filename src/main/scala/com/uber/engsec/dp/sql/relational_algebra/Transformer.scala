@@ -26,27 +26,27 @@ import java.util.Properties
 
 import com.google.common.collect.ImmutableList
 import com.uber.engsec.dp.schema.{CalciteSchemaFromConfig, Schema}
-import org.apache.calcite.adapter.java.JavaTypeFactory
 import org.apache.calcite.avatica.util.{Casing, Quoting}
 import org.apache.calcite.jdbc.CalciteSchema
 import org.apache.calcite.plan._
-import org.apache.calcite.plan.hep.{HepPlanner, HepProgram}
 import org.apache.calcite.prepare.CalciteCatalogReader
-import org.apache.calcite.rel.`type`.RelDataType
+import org.apache.calcite.rel.`type`._
 import org.apache.calcite.rel.metadata.CachingRelMetadataProvider
-import org.apache.calcite.rel.rules.FilterJoinRule
 import org.apache.calcite.rel.{RelNode, RelRoot}
 import org.apache.calcite.rex.{RexBuilder, RexExecutor}
 import org.apache.calcite.schema.SchemaPlus
+import org.apache.calcite.sql.SqlOperatorTable
+import org.apache.calcite.sql.`type`.SqlTypeFactoryImpl
 import org.apache.calcite.sql.parser.SqlParser
 import org.apache.calcite.sql.validate.{SqlConformance, SqlConformanceEnum, SqlValidatorImpl}
-import org.apache.calcite.sql.{SqlInsert, SqlOperatorTable}
 import org.apache.calcite.sql2rel.{RelDecorrelator, SqlRexConvertletTable, SqlToRelConverter}
 import org.apache.calcite.tools._
 
 /** Transforms a SQL query to relational algebra using Calcite. */
 object Transformer {
   val schema = new CalciteSchemaFromConfig
+
+  val relTypeSystem: RelDataTypeSystem = new RelDataTypeSystemImpl() {}
 
   val parserConfig = SqlParser.configBuilder
     .setQuoting(Quoting.DOUBLE_QUOTE)
@@ -78,7 +78,7 @@ class Transformer(val config: FrameworkConfig) {
   val executor: RexExecutor = config.getExecutor
 
   val defaultSchema = config.getDefaultSchema
-  var typeFactory: JavaTypeFactory = null
+  var typeFactory: RelDataTypeFactory = new SqlTypeFactoryImpl(Transformer.relTypeSystem)
   var planner: RelOptPlanner = null
 
   var validator: SqlValidatorImpl = null
@@ -86,52 +86,48 @@ class Transformer(val config: FrameworkConfig) {
 
   def getEmptyTraitSet: RelTraitSet = planner.emptyTraitSet
 
-  def convertToRelTree(sql: String): RelNode = {
-    Frameworks.withPlanner(new Frameworks.PlannerAction[Void]() {
-      override def apply(cluster: RelOptCluster, relOptSchema: RelOptSchema, rootSchema: SchemaPlus): Void = {
-        typeFactory = cluster.getTypeFactory.asInstanceOf[JavaTypeFactory]
-        planner = cluster.getPlanner
-        planner.setExecutor(executor)
-        null.asInstanceOf[Void]
-      }
-    }, this.config)
-
-    if (this.traitDefs != null) {
-      import scala.collection.JavaConverters._
-      planner.clearRelTraitDefs()
-      this.traitDefs.asScala.foreach { planner.addRelTraitDef(_) }
+  Frameworks.withPlanner(new Frameworks.PlannerAction[Void]() {
+    override def apply(cluster: RelOptCluster, relOptSchema: RelOptSchema, rootSchema: SchemaPlus): Void = {
+      planner = cluster.getPlanner
+      planner.setExecutor(executor)
+      null.asInstanceOf[Void]
     }
+  }, this.config)
 
+  if (this.traitDefs != null) {
+    import scala.collection.JavaConverters._
+    planner.clearRelTraitDefs()
+    this.traitDefs.asScala.foreach { planner.addRelTraitDef(_) }
+  }
+
+  val conformance = SqlConformanceEnum.LENIENT
+  val catalogReader = createCatalogReader
+  this.validator = new CalciteSqlValidator(operatorTable, catalogReader, typeFactory, conformance)
+  this.validator.setIdentifierExpansion(true)
+  val rexBuilder = new RexBuilder(typeFactory)
+  val cluster = RelOptCluster.create(planner, rexBuilder)
+  val sqlToRelConfig = SqlToRelConverter
+    .configBuilder
+    .withTrimUnusedFields(true)
+    .withConvertTableAccess(false)
+    .withExpand(true)
+    .build
+
+  val sqlToRelConverter =
+    new SqlToRelConverter(new ViewExpanderImpl, validator, createCatalogReader, cluster, convertletTable, sqlToRelConfig)
+
+  def convertToRelTree(sql: String): RelNode = {
     val parser = SqlParser.create(sql, parserConfig)
-    val sqlNode = parser.parseStmt
-    val conformance = SqlConformanceEnum.LENIENT
-    val catalogReader = createCatalogReader
-    this.validator = new CalciteSqlValidator(operatorTable, catalogReader, typeFactory, conformance)
-    this.validator.setIdentifierExpansion(true)
+    val sqlNode = parser.parseQuery
 
     val validatedSqlNode = validator.validate(sqlNode)
-
-    val rexBuilder = new RexBuilder(typeFactory)
-    val cluster = RelOptCluster.create(planner, rexBuilder)
-    val config = SqlToRelConverter
-      .configBuilder
-      .withTrimUnusedFields(false)
-      .withConvertTableAccess(false)
-      .withExpand(false)
-      .build
-
-    val sqlToRelConverter =
-      new SqlToRelConverter(new ViewExpanderImpl, validator, createCatalogReader, cluster, convertletTable, config)
 
     root = sqlToRelConverter.convertQuery(validatedSqlNode, false, true)
     root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true))
     root = root.withRel(RelDecorrelator.decorrelateQuery(root.rel))
     root = root.withRel(sqlToRelConverter.trimUnusedFields(true, root.rel))
 
-    val program = HepProgram.builder.addRuleInstance(FilterJoinRule.FILTER_ON_JOIN).build
-    val optPlanner = new HepPlanner(program)
-    optPlanner.setRoot(root.rel)
-    optPlanner.findBestExp
+    root.rel
   }
 
   class ViewExpanderImpl extends RelOptTable.ViewExpander {
@@ -149,7 +145,7 @@ class Transformer(val config: FrameworkConfig) {
       val validatedSqlNode = validator.validate(sqlNode)
       val rexBuilder = new RexBuilder(typeFactory)
       val cluster = RelOptCluster.create(planner, rexBuilder)
-      val config = SqlToRelConverter.configBuilder.withTrimUnusedFields(false).withConvertTableAccess(false).build
+      val config = SqlToRelConverter.configBuilder.withTrimUnusedFields(true).withConvertTableAccess(false).build
       val sqlToRelConverter = new SqlToRelConverter(new ViewExpanderImpl, validator, catalogReader, cluster, convertletTable, config)
       root = sqlToRelConverter.convertQuery(validatedSqlNode, true, false)
       root = root.withRel(sqlToRelConverter.flattenTypes(root.rel, true))
@@ -180,17 +176,6 @@ class Transformer(val config: FrameworkConfig) {
 
 class CalciteSqlValidator(val opTab: SqlOperatorTable,
                           val _catalogReader: CalciteCatalogReader,
-                          val _typeFactory: JavaTypeFactory,
+                          val _typeFactory: RelDataTypeFactory,
                           val conformance: SqlConformance)
-  extends SqlValidatorImpl(opTab, _catalogReader, _typeFactory, conformance) {
-
-  override def getLogicalSourceRowType(sourceRowType: RelDataType, insert: SqlInsert): RelDataType = {
-    val superType = super.getLogicalSourceRowType(sourceRowType, insert)
-    typeFactory.asInstanceOf[JavaTypeFactory].toSql(superType)
-  }
-
-  override def getLogicalTargetRowType(targetRowType: RelDataType, insert: SqlInsert): RelDataType = {
-    val superType = super.getLogicalTargetRowType(targetRowType, insert)
-    typeFactory.asInstanceOf[JavaTypeFactory].toSql(superType)
-  }
-}
+  extends SqlValidatorImpl(opTab, _catalogReader, _typeFactory, conformance)
