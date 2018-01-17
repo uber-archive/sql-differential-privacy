@@ -153,6 +153,8 @@ object Expr {
   // Aggregation functions
   case class Sum(_col: ColumnReference) extends AggExpr(SqlStdOperatorTable.SUM, Some(_col))
   case class Avg(_col: ColumnReference) extends AggExpr(SqlStdOperatorTable.AVG, Some(_col))
+  case class Min(_col: ColumnReference) extends AggExpr(SqlStdOperatorTable.MIN, Some(_col))
+  case class Max(_col: ColumnReference) extends AggExpr(SqlStdOperatorTable.MAX, Some(_col))
   case class Count(_col: ColumnReference) extends AggExpr(SqlStdOperatorTable.COUNT, if (_col eq *) None else Some(_col))
   case class Median(_col: ColumnReference) extends SqlOperatorExpr(SqlExtFunctions.MEDIAN, _col)
 
