@@ -16,8 +16,10 @@ import org.apache.calcite.rel.rules.FilterProjectTransposeRule
 
 class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
   /** Returns the number of partitions to use for the given table. Default is pow(n, 0.4), where n is the size of the
-    * dataset, as recommended by Mohan et al. (https://dl.acm.org/citation.cfm?id=2213876). Selection of this
-    * value does not affect the privacy guarantee but may impact utility.
+    * dataset, as recommended by Mohan et al. [1]. Selection of this value does not affect the privacy guarantee but may
+    * impact utility.
+    *
+    * [1] https://dl.acm.org/citation.cfm?id=2213876
     */
   def getNumPartitions(tableName: String): Int = {
     val approxRowCount = Schema.getTableProperties(tableName).getOrElse("approxRowCount",
@@ -35,7 +37,19 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
     * if the value changes between evaluations. Note this behavior occurs even if the databases is configured to
     * materialize views, since such directives may be ignored for views using nondeterministic functions.
     */
-  def getPartitionExpression(tableName: String, numPartitions: Int): ValueExpr = { RowNumber % (numPartitions-1) }
+  def getPartitionExpression(tableName: String, numPartitions: Int): ValueExpr = { RowNumber % numPartitions }
+
+  /** Returns the widening factor. This value is used to widen the range of the first and third quartiles obtained in
+    * Step #2, in order to arrive at an "effective" interquartile range that results in minimal clipping. Note that the
+    * Laplace noise added in Step 5 is proportional to the size of this widened range. Therefore, selection of this
+    * value presents a tradeoff: a value too small risks skewing the winsorized mean due to excessive clipping, while a
+    * value too large risks more noise added to the winsorized mean, potentially counteracting the benefit of less
+    * clipping. The value below, proposed by Smith [1], was selected to prove optimal asymptotic convergence rates;
+    * the best value in practice will depend on the data and query.
+    *
+    * [1] http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.296.2379&rep=rep1&type=pdf
+    */
+  def getWideningFactor(numPartitions: Int): Double = math.pow(numPartitions, 1.0 / 3 + 1.0 / 10)
 
   /** Returns a randomly sampled record according to probability density value in column [prob].
     * The probabilities must be normalized (i.e. they must sum to 1). The rows *do not* need be sorted by [prob].
@@ -91,6 +105,8 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
     val (tableName, colName) = (targetColSource.table, targetColSource.column)
 
     val numPartitions = getNumPartitions(tableName)
+    val rad = getWideningFactor(numPartitions)
+
     val groupingExpression = getPartitionExpression(tableName, numPartitions) AS "_grp"
     val isStatisticalEstimator = targetColAggregation.outermostAggregation.contains(AVG)
 
@@ -136,10 +152,7 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
     /** Step 2: Using the exponential mechanism, calculate differentially private quartiles (1/4 and 3/4) of partitioned
       * aggregation results, allocating one-quarter of the total privacy budget to each quartile calculation.
       */
-    val rowNumber = RowNumber AS "idx"
     val clampedColumn = clamp(targetCol, 0, config.lambda) AS s"_clamped_${targetCol.name}"
-    val y_14 = (left(clampedColumn) - right(clampedColumn)) * Exp(-1 * (config.epsilon/4) * Abs(left(rowNumber) - 0.25 * numPartitions)) AS "_y_14"
-    val y_34 = (left(clampedColumn) - right(clampedColumn)) * Exp(-1 * (config.epsilon/4) * Abs(left(rowNumber) - 0.75 * numPartitions)) AS "_y_34"
 
     val y_calc = queryWithPartitionColumn
       .project (targetCol)
@@ -147,42 +160,45 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
       .union (rel(config.lambda: Expr))
       .project (clampedColumn)
       .sort (clampedColumn)
-      .project (*, rowNumber)
-      .joinSelf ("_clamped_with_idx", left(rowNumber) == right(rowNumber) + 1)
-      .project (*,
-        left(clampedColumn) AS "_range_max",
-        right(clampedColumn) AS "_range_min",
-        y_14,
-        y_34)
+      .project (*, RowNumber AS "_idx")
+      .joinSelf ("_clamped_with_idx", left(col("_idx")) == right(col("_idx")) + 1)
+      .project (
+        right(col("_idx"))-1 AS "_i",
+        right(clampedColumn) AS "_z_i",
+        left(clampedColumn) AS "_z_i_next"
+      )
+      .project(*,
+        (col("_z_i_next") - col("_z_i")) * Exp(-1 * (config.epsilon/4) * Abs(col("_i") - 0.25 * numPartitions)) AS "_y_i_1qrt",
+        (col("_z_i_next") - col("_z_i")) * Exp(-1 * (config.epsilon/4) * Abs(col("_i") - 0.75 * numPartitions)) AS "_y_i_3qrt"
+      )
       .asAlias ("_y_calc")
 
     val probs = y_calc
-      .agg () (Sum(col(y_14)) AS "y_14_normalizing", Sum(col(y_34)) AS "y_34_normalizing")
+      .agg () (Sum(col("_y_i_1qrt")) AS "_y_1qrt_sum", Sum(col("_y_i_3qrt")) AS "_y_3qrt_sum")
       .join (y_calc, true)
       .project (*,
-        y_14 / col("y_14_normalizing") AS "_y_14_normalized_prob",
-        y_34 / col("y_34_normalizing") AS "_y_34_normalized_prob")
-      .asAlias("_prob_table")
+        col("_y_i_1qrt") / col("_y_1qrt_sum") AS "_y_i_1qrt_normalized",
+        col("_y_i_3qrt") / col("_y_3qrt_sum") AS "_y_i_3qrt_normalized")
+      .asAlias("_prob_tbl")
 
-    val sampledRow_14 = sampleRowFromDistribution(probs, col("_y_14_normalized_prob"), col(rowNumber))
-      .project( Rand * (col("_range_max") - col("_range_min")) + col("_range_min") AS "_draw_result_14" )
+    val sampledRow_14 = sampleRowFromDistribution(probs, col("_y_i_1qrt_normalized"), col("_i"))
+      .project( Rand * (col("_z_i_next") - col("_z_i")) + col("_z_i") AS "_draw_result_1qrt" )
 
-    val sampledRow_34 = sampleRowFromDistribution(probs, col("_y_34_normalized_prob"), col(rowNumber))
-      .project( Rand * (col("_range_max") - col("_range_min")) + col("_range_min") AS "_draw_result_34" )
+    val sampledRow_34 = sampleRowFromDistribution(probs, col("_y_i_3qrt_normalized"), col("_i"))
+      .project( Rand * (col("_z_i_next") - col("_z_i")) + col("_z_i") AS "_draw_result_3qrt" )
 
     val sampledResult = sampledRow_14.join(sampledRow_34, true)
 
     /** Step 3: Estimate the range [u,l] of partitioned aggregation values from differentially private quartiles.
       */
-    val rad: ValueExpr = math.pow(numPartitions, 1.0 / 3 + 1.0 / 10)
     val privateBounds = sampledResult
       .project(*,
-        (col("_draw_result_14") + col("_draw_result_34"))/2 AS "u_crude",
-        Abs(col("_draw_result_34") - col("_draw_result_14")) AS "iqr_crude")
+        (col("_draw_result_1qrt") + col("_draw_result_3qrt")) / 2 AS "u_crude",
+        Abs(col("_draw_result_3qrt") - col("_draw_result_1qrt")) AS "iqr_crude")
       .project(
         col("u_crude") + 4 * rad * col("iqr_crude") AS "u",
         col("u_crude") - 4 * rad * col("iqr_crude") AS "l")
-      .asAlias("_private_bounds")
+      .asAlias("_priv_bounds")
 
     /** Step 4: Calculate winsorized mean by clamping aggregation results to this range and computing the mean value
       * across all partitions.
@@ -191,14 +207,15 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
       .join(privateBounds, true)
       .project(*, clamp(targetCol, col("l"), col("u")) AS "_private_clamped")
       .agg () (Sum(col("_private_clamped")) AS "_private_sum")
-      .project(*, col("_private_sum") / numPartitions AS "_u_private")
+      .project(*, col("_private_sum") / numPartitions AS "_winsorized_mean")
 
     /** Step 5: Add Laplace noise with scale |u-l|/2*epsilon*k to winsorized mean to obtain differentially
       * private result.
       */
     val privateResult = privateClampedTbl
       .join(privateBounds.project(col("l"), col("u")).fetch(1), true)
-      .project((col("_u_private") + (Abs(col("u") - col("l"))/(2 * config.epsilon * numPartitions)) * DPExpr.LaplaceSample) * scalingFactor AS s"${targetCol.name}_private")
+      .project(col("_winsorized_mean"), Abs(col("u") - col("l"))/(2 * config.epsilon * numPartitions) AS "_laplace_scale")
+      .project((col("_winsorized_mean") + (col("_laplace_scale") * DPExpr.LaplaceSample)) * scalingFactor AS s"${targetCol.name}_private")
 
     privateResult
   }
