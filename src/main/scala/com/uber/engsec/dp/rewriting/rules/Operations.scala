@@ -50,7 +50,7 @@ object Operations {
         .flatMap{ newCol => if (newCol eq Expr.*) origProjections else List(ColumnDefinition.columnReferenceToColumnDefinitionWithName(newCol)) }
         .map{ col => (col, col.expr.toRex(targetNode)) }
 
-      val newProject = new LogicalProject(root.getCluster, root.getTraitSet, root.getInput, newColumns.map{ _._2 }.asJava, Helpers.getRecordType(newColumns))
+      val newProject = LogicalProject.create(root.getInput, newColumns.map{ _._2 }.asJava, Helpers.getRecordType(newColumns))
       Relation(newProject)
     }
   }
@@ -74,7 +74,7 @@ object Operations {
       val targetColIndices = cols.map{ col => Helpers.lookupColumnOrdinal(root.getInput, col).asInstanceOf[Integer] }
       val newGroupSet = root.getGroupSet.union(ImmutableBitSet.of(targetColIndices.asJava))
 
-      val newAggregate = Relation(new LogicalAggregate(root.getCluster, root.getTraitSet, root.getInput, root.indicator, newGroupSet, root.getGroupSets, root.getAggCallList))
+      val newAggregate = Relation(LogicalAggregate.create(root.getInput, newGroupSet, root.getGroupSets, root.getAggCallList))
 
       // Project the grouped columns to the end of the relation so we don't disrupt ordinal references further up the tree
       val oldColumns = root.getRowType.getFieldList.asScala
@@ -92,7 +92,7 @@ object Operations {
         (ColumnDefinitionWithOrdinal(new SimpleValueExpr(rexNode), colName, rexNode.getIndex), rexNode)
       }
 
-      val normalizingProject = new LogicalProject(newAggregate.getCluster, newAggregate.getTraitSet, newAggregate, newProjections.map{ _._2 }.asJava, Helpers.getRecordType(newProjections))
+      val normalizingProject = LogicalProject.create(newAggregate, newProjections.map{ _._2 }.asJava, Helpers.getRecordType(newProjections))
       Relation(normalizingProject)
     }
   }
@@ -209,7 +209,7 @@ object Operations {
       * @return Union relation.
       */
     def union(other: Relation, all: Boolean = true): Relation = {
-      val result = new LogicalUnion(root.getCluster, root.getTraitSet, List(root.unwrap, other.unwrap).asJava, all)
+      val result = LogicalUnion.create(List(root.unwrap, other.unwrap).asJava, all)
       Relation(result)
     }
 
@@ -229,7 +229,7 @@ object Operations {
         AggregateCall.create(agg.expr.aggFunction, false, colOrdinal, -1, groups.length, root, null, colName)
       }
 
-      val result = new LogicalAggregate(root.getCluster, root.getTraitSet, root.unwrap, false, groupSet, null, aggCalls.asJava)
+      val result = LogicalAggregate.create(root.unwrap, groupSet, null, aggCalls.asJava)
       Relation(result)
     }
 
@@ -363,7 +363,7 @@ object Operations {
   }
 
   def rewriteProjections(node: LogicalProject, newProjects: Seq[RexNode]): LogicalProject =
-    new LogicalProject(node.getCluster, node.getTraitSet, node.getInput, newProjects.asJava, node.getRowType)
+    LogicalProject.create(node.getInput, newProjects.asJava, node.getRowType)
 }
 
 /** Helper functions for rewriting operations. These methods should not be called directly by rewriters. */
@@ -402,8 +402,8 @@ object Helpers {
     * references in join conditions based on potentially new ordinals of children columns. */
   def remapChildren(node: Relation, oldChildren: Seq[Relation], newChildren: Seq[Relation]): Relation = {
     val newNode = node.unwrap match {
-      case p: LogicalProject => new LogicalProject(p.getCluster, p.getTraitSet, newChildren.head.unwrap, p.getProjects, p.getRowType)
-      case f: LogicalFilter => new LogicalFilter(f.getCluster, f.getTraitSet, newChildren.head.unwrap, f.getCondition, f.getVariablesSet.asInstanceOf[ImmutableSet[CorrelationId]])
+      case p: LogicalProject => LogicalProject.create(newChildren.head.unwrap, p.getProjects, p.getRowType)
+      case f: LogicalFilter => LogicalFilter.create(newChildren.head.unwrap, f.getCondition, f.getVariablesSet.asInstanceOf[ImmutableSet[CorrelationId]])
       case j: LogicalJoin =>
         val left = newChildren.head.unwrap
         val right = newChildren(1).unwrap
@@ -417,12 +417,12 @@ object Helpers {
 
         LogicalJoin.create(left, right, newCondition, newVariablesSet, j.getJoinType, false, systemFieldList)
 
-      case a: LogicalAggregate => new LogicalAggregate(a.getCluster, a.getTraitSet, newChildren.head.unwrap, a.indicator, a.getGroupSet, a.getGroupSets, a.getAggCallList)
+      case a: LogicalAggregate => LogicalAggregate.create(newChildren.head.unwrap, a.indicator, a.getGroupSet, a.getGroupSets, a.getAggCallList)
       case s: LogicalSort => LogicalSort.create(newChildren.head.unwrap, s.collation, s.offset, s.fetch) // standard constructor for LogicalSort is marked private
-      case u: LogicalUnion => new LogicalUnion(u.getCluster, u.getTraitSet, newChildren.map{ _.unwrap }.toList.asJava, u.all)
-      case m: LogicalMinus => new LogicalMinus(m.getCluster, m.getTraitSet, newChildren.map{ _.unwrap }.toList.asJava, m.all)
-      case i: LogicalIntersect => new LogicalIntersect(i.getCluster, i.getTraitSet, newChildren.map{ _.unwrap }.toList.asJava, i.all)
-      case c: LogicalCorrelate => new LogicalCorrelate(c.getCluster, c.getTraitSet, newChildren.head.unwrap, newChildren(1).unwrap, c.getCorrelationId, c.getRequiredColumns, c.getJoinType)
+      case u: LogicalUnion => LogicalUnion.create(newChildren.map{ _.unwrap }.toList.asJava, u.all)
+      case m: LogicalMinus => LogicalMinus.create(newChildren.map{ _.unwrap }.toList.asJava, m.all)
+      case i: LogicalIntersect => LogicalIntersect.create(newChildren.map{ _.unwrap }.toList.asJava, i.all)
+      case c: LogicalCorrelate => LogicalCorrelate.create(newChildren.head.unwrap, newChildren(1).unwrap, c.getCorrelationId, c.getRequiredColumns, c.getJoinType)
     }
 
     Relation(newNode)
