@@ -13,7 +13,7 @@ representation. This framework can be used to implement other types of dataflow 
 
 ## Building & Running
 
-This framework is written in Scala and built using Maven. To build the code:
+This framework is written in Scala and built using Maven. The code has been tested on Mac OS X and Linux. To build the code:
 
 ```
 $ mvn package
