@@ -41,10 +41,7 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:git@github.com:uber/sql-differential-privacy.git</connection>
-        <developerConnection>scm:git:git@github.com:uber/sql-differential-privacy.git</developerConnection>
-        <url>git@github.com:uber/sql-differential-privacy.git</url>
-        <tag>HEAD</tag>
+        <developerConnection>scm:git:gitolite@code.uber.internal:engsec/sql-differential-privacy</developerConnection>
     </scm>
 
     <developers>
@@ -67,14 +64,14 @@
     </properties>
 
     <distributionManagement>
-        <snapshotRepository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
         <repository>
-            <id>ossrh</id>
-            <url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+            <id>central</id>
+            <url>http://artifactory.uber.internal:4587/artifactory/libs-release-local/</url>
         </repository>
+        <snapshotRepository>
+            <id>snapshots</id>
+            <url>http://artifactory.uber.internal:4587/artifactory/libs-snapshot-local/</url>
+        </snapshotRepository>
     </distributionManagement>
 
     <dependencies>
@@ -194,23 +191,11 @@
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>org.sonatype.plugins</groupId>
-                        <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <extensions>true</extensions>
-                        <configuration>
-                            <serverId>ossrh</serverId>
-                            <nexusUrl>https://oss.sonatype.org/</nexusUrl>
-                            <autoReleaseAfterClose>true</autoReleaseAfterClose>
-                        </configuration>
-                    </plugin>
-                    <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-release-plugin</artifactId>
+                        <version>2.5.3</version>
                         <configuration>
-                            <autoVersionSubmodules>true</autoVersionSubmodules>
-                            <useReleaseProfile>false</useReleaseProfile>
-                            <releaseProfiles>ossrh</releaseProfiles>
-                            <goals>deploy</goals>
+                            <tagNameFormat>@{project.version}</tagNameFormat>
                         </configuration>
                     </plugin>
                     <plugin>
