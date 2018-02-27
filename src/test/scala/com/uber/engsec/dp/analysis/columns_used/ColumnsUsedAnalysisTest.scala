@@ -22,14 +22,16 @@
 
 package com.uber.engsec.dp.analysis.columns_used
 
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import junit.framework.TestCase
 
 class ColumnsUsedAnalysisTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   def checkResult(queryStr: String, expected: List[Set[String]]): Unit = {
-    val root = QueryParser.parseToDataflowGraph(queryStr)
-    val results = (new ColumnsUsedAnalysis).run(root)
+    val root = QueryParser.parseToDataflowGraph(queryStr, database)
+    val results = (new ColumnsUsedAnalysis).run(root, database)
     TestCase.assertEquals(expected, results.toList)
   }
 

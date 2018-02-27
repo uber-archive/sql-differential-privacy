@@ -23,15 +23,18 @@
 package com.uber.engsec.dp.rewriting
 
 import com.uber.engsec.dp.rewriting.coverage.CoverageRewriter
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import junit.framework.TestCase
 
 class CoverageRewriterTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   def checkResult(query: String, expected: String): Unit = {
-    val root = QueryParser.parseToRelTree(query)
-    val result = (new CoverageRewriter).run(root, ())
-    TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql)
+    val root = QueryParser.parseToRelTree(query, database)
+    val config = new RewriterConfig(database)
+    val result = new CoverageRewriter(config).run(root)
+    TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql())
   }
 
   def testStatisticalQuery() = {

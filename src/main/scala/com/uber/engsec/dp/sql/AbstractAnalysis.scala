@@ -23,6 +23,7 @@
 package com.uber.engsec.dp.sql
 
 import com.uber.engsec.dp.exception.DPException
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.util.IdentityHashMap
 
 import scala.collection.mutable
@@ -45,10 +46,10 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
 
   /** Runs the analysis on the given query and returns the abstract results at tree root.
     */
-  @throws[DPException]
-  final def analyzeQuery(query: String): T = {
+  final def analyzeQuery(query: String, database: Database): T = {
     try {
-      run(parseQueryToTree(query))
+      val treeRoot = parseQueryToTree(query, database)
+      run(treeRoot, database)
     }
     catch {
       case e: Exception =>
@@ -59,10 +60,9 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
 
   /** Runs the analysis on the given parsed representation of the query.
     */
-  @throws[DPException]
-  final def analyzeQuery(root: N): T = {
+  final def analyzeQuery(root: N, database: Database): T = {
     try {
-      run(root)
+      run(root, database)
     }
     catch {
       case e: Exception =>
@@ -74,9 +74,10 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
   /** Runs the analysis on the tree and returns the abstract result at the tree root. Subclases may override this
     * method to pre-process the query before analysis begins, but must call super.run().
     */
-  def run(root: N): T = {
+  def run(root: N, database: Database): T = {
     try {
       treeRoot = Some(root)
+      currentDb = Some(database)
       resultMap.clear()
       this.process(root)
       currentNode = None
@@ -90,6 +91,9 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
     resultMap(root)
   }
 
+  /** Returns the current database being queried. */
+  def getDatabase: Database = currentDb.get
+
   /******************************************************************************************************************
    * Analysis engine internals.
    ******************************************************************************************************************/
@@ -101,6 +105,9 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
 
   /** The root node of the tree under analysis. */
   final var treeRoot: Option[N] = None
+
+  /** The database being queried. */
+  final var currentDb: Option[Database] = None
 
   /** The current node being processed. Subclasses should update this variable as tree is traversed to enable helpful
     * debugging when analysis throws an exception.

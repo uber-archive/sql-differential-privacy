@@ -22,6 +22,7 @@
 
 package examples
 
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.util.ElasticSensitivity
 
 /** A simple differential privacy example using elastic sensitivity.
@@ -43,6 +44,7 @@ import com.uber.engsec.dp.util.ElasticSensitivity
 object ElasticSensitivityExample extends App {
   // Use the table schemas and metadata defined by the test classes
   System.setProperty("schema.config.path", "src/test/resources/schema.yaml")
+  val database = Schema.getDatabase("test")
 
   // example query: How many US customers ordered product #1?
   val query = """
@@ -61,7 +63,7 @@ object ElasticSensitivityExample extends App {
   println(s"Private result: $QUERY_RESULT\n")
 
   (1 to 10).foreach { i =>
-    val noisyResult = ElasticSensitivity.addNoise(query, QUERY_RESULT, EPSILON)
+    val noisyResult = ElasticSensitivity.addNoise(query, database, QUERY_RESULT, EPSILON)
     println(s"Noisy result (run $i): %.0f".format(noisyResult))
   }
 }

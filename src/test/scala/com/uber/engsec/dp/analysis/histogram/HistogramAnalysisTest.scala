@@ -24,13 +24,15 @@ package com.uber.engsec.dp.analysis.histogram
 
 import com.uber.engsec.dp.dataflow.AggFunctions._
 import com.uber.engsec.dp.dataflow.domain.{Bottom, Top}
+import com.uber.engsec.dp.schema.Schema
 import junit.framework.TestCase
 
 class HistogramAnalysisTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   private def getResults(query: String) = {
     val h = new HistogramAnalysis
-    val results = h.analyzeQuery(query)
+    val results = h.analyzeQuery(query, database)
     results.colFacts.toList
   }
 

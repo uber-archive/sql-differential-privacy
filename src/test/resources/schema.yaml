@@ -40,3 +40,20 @@ databases:
       maxFreq: 250
     - name: "product_id"
       maxFreq: 2000
+
+- database: "test2"
+  dialect: "hive"
+  namespace: "public"
+  tables:
+  - table: "my_table"
+    columns:
+    - name: "my_col"
+    - name: "structured_col"
+      fields:
+      - name: "field1"
+      - name: "field2"
+        fields:
+        - name: "subfield1"
+  - table: "subschema.tbl"
+    columns:
+    - name: "col"

@@ -22,17 +22,19 @@
 
 package com.uber.engsec.dp.rewriting
 
-import com.uber.engsec.dp.rewriting.mechanism.{ElasticSensitivityRewriter, SampleAndAggregateConfig, SampleAndAggregateRewriter}
+import com.uber.engsec.dp.rewriting.mechanism.{SampleAndAggregateConfig, SampleAndAggregateRewriter}
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import junit.framework.TestCase
 
 class SampleAndAggregateRewriterTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   def checkResult(query: String, epsilon: Double, lambda: Double, expected: String): Unit = {
-    val root = QueryParser.parseToRelTree(query)
-    val config = SampleAndAggregateConfig(epsilon, lambda)
-    val result = (new SampleAndAggregateRewriter).run(root, config)
-    TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql)
+    val root = QueryParser.parseToRelTree(query, database)
+    val config = SampleAndAggregateConfig(epsilon, lambda, database)
+    val result = new SampleAndAggregateRewriter(config).run(root)
+    TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql())
   }
 
   def testStatisticalQuery() = {

@@ -1,10 +1,7 @@
 package examples
 
-import com.uber.engsec.dp.analysis.histogram.{HistogramAnalysis, QueryType}
-import com.uber.engsec.dp.dataflow.AggFunctions.{AVG, COUNT, SUM}
-import com.uber.engsec.dp.exception.UnsupportedQueryException
+import com.uber.engsec.dp.analysis.histogram.HistogramAnalysis
 import com.uber.engsec.dp.rewriting.mechanism.{ElasticSensitivityConfig, ElasticSensitivityRewriter, SampleAndAggregateConfig, SampleAndAggregateRewriter}
-import com.uber.engsec.dp.rewriting.rules.Expr.col
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import com.uber.engsec.dp.util.ElasticSensitivity
@@ -14,6 +11,7 @@ import com.uber.engsec.dp.util.ElasticSensitivity
 object QueryRewritingExample extends App {
   // Use the table schemas and metadata defined by the test classes
   System.setProperty("schema.config.path", "src/test/resources/schema.yaml")
+  val database = Schema.getDatabase("test")
 
   // privacy budget
   val EPSILON = 0.1
@@ -32,22 +30,22 @@ object QueryRewritingExample extends App {
       .stripMargin.stripPrefix("\n")
 
     // Print the example query and privacy budget
-    val root = QueryParser.parseToRelTree(query)
+    val root = QueryParser.parseToRelTree(query, database)
     println("Original query:")
     printQuery(query)
     println(s"> Epsilon: $EPSILON")
 
     // Compute mechanism parameter values from the query. Note the rewriter does this automatically; here we calculate
     // the values manually so we can print them.
-    val elasticSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, 0, EPSILON)
+    val elasticSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, database, 0, EPSILON)
     println(s"> Elastic sensitivity of this query: $elasticSensitivity")
     println(s"> Required scale of Laplace noise: $elasticSensitivity / $EPSILON = ${elasticSensitivity/EPSILON}")
 
     // Rewrite the original query to enforce differential privacy using Elastic Sensitivity.
     println("\nRewritten query:")
-    val config = ElasticSensitivityConfig(epsilon = EPSILON)
-    val rewrittenQuery = (new ElasticSensitivityRewriter).run(query, config)
-    printQuery(rewrittenQuery.toSql)
+    val config = ElasticSensitivityConfig(epsilon = EPSILON, database = database)
+    val rewrittenQuery = new ElasticSensitivityRewriter(config).run(query)
+    printQuery(rewrittenQuery.toSql())
   }
 
   def sampleAndAggregateExample() = {
@@ -61,17 +59,17 @@ object QueryRewritingExample extends App {
       .stripMargin.stripPrefix("\n")
 
     // Print the example query and privacy budget
-    val root = QueryParser.parseToRelTree(query)
+    val root = QueryParser.parseToRelTree(query, database)
     println("Original query:")
     printQuery(query)
     println(s"> Epsilon: $EPSILON")
 
     // Compute mechanism parameter values from the query. Note the rewriter does this automatically; here we calculate
     // the values manually so we can print them.
-    val analysisResults = new HistogramAnalysis().run(root).colFacts.head
+    val analysisResults = new HistogramAnalysis().run(root, database).colFacts.head
     println(s"> Aggregation function applied: ${analysisResults.outermostAggregation}")
     val tableName = analysisResults.references.head.table
-    val approxRowCount = Schema.getTableProperties(tableName)("approxRowCount").toLong
+    val approxRowCount = Schema.getTableProperties(database, tableName)("approxRowCount").toLong
 
     println(s"> Table being queried: $tableName")
     println(s"> Approximate cardinality of table '$tableName': $approxRowCount")
@@ -80,9 +78,9 @@ object QueryRewritingExample extends App {
 
     // Rewrite the original query to enforce differential privacy using Sample and Aggregate.
     println("\nRewritten query:")
-    val config = SampleAndAggregateConfig(epsilon = EPSILON, lambda = LAMBDA)
-    val rewrittenQuery = (new SampleAndAggregateRewriter).run(query, config)
-    printQuery(rewrittenQuery.toSql)
+    val config = SampleAndAggregateConfig(epsilon = EPSILON, lambda = LAMBDA, database = database)
+    val rewrittenQuery = new SampleAndAggregateRewriter(config).run(query)
+    printQuery(rewrittenQuery.toSql())
   }
 
   elasticSensitivityExample()

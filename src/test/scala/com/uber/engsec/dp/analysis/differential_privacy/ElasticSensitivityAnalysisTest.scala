@@ -23,11 +23,13 @@
 package com.uber.engsec.dp.analysis.differential_privacy
 
 import com.uber.engsec.dp.exception.{UnsupportedConstructException, UnsupportedQueryException}
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import com.uber.engsec.dp.sql.ast.Transformer
 import junit.framework.TestCase
 
 class ElasticSensitivityAnalysisTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   /********************
     * HELPER FUNCTIONS
@@ -36,10 +38,10 @@ class ElasticSensitivityAnalysisTest extends TestCase {
   def calculateSensitivities(query: String, k: Int) = {
     println(s"Processing query (distance ${k}): ${query}")
     Transformer.schemaMode = Transformer.SCHEMA_MODE.STRICT
-    val root = QueryParser.parseToRelTree(query)
+    val root = QueryParser.parseToRelTree(query, database)
     val analysis = new ElasticSensitivityAnalysis()
     analysis.setK(k)
-    analysis.run(root).colFacts
+    analysis.run(root, database).colFacts
   }
 
   def validateSensitivity(query: String, k: Int, expectedSensitivities: Double*) {

@@ -22,6 +22,7 @@
 
 package com.uber.engsec.dp.analysis.taint
 
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import junit.framework.TestCase
 
@@ -32,9 +33,11 @@ import junit.framework.TestCase
   * All other columns are untainted.
   */
 class TaintAnalysisTest extends TestCase {
+  val database = Schema.getDatabase("test")
+
   private def getResults(query: String) = {
-    val root = QueryParser.parseToRelTree(query)
-    new TaintAnalysis().run(root).colFacts.toList
+    val root = QueryParser.parseToRelTree(query, database)
+    new TaintAnalysis().run(root, database).colFacts.toList
   }
 
   def testSimple() = {

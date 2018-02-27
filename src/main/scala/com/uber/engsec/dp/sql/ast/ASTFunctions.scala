@@ -24,12 +24,13 @@ package com.uber.engsec.dp.sql.ast
 
 import com.facebook.presto.sql.tree._
 import com.uber.engsec.dp.exception.{TransformationException, UnsupportedConstructException}
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.{AbstractAnalysis, QueryParser, TreeFunctions, TreePrinter}
 
 trait ASTFunctions extends TreeFunctions[Node] {
   this: AbstractAnalysis[Node, _] =>
   override def getNodeChildren(node: Node): Iterable[Node] = ASTFunctions.getChildren(node)
-  override def parseQueryToTree(query: String): Node = QueryParser.parseToPrestoTree(query)
+  override def parseQueryToTree(query: String, database: Database): Node = QueryParser.parseToPrestoTree(query)
   override def printTree(node: Node) = TreePrinter.printTreePresto(node, resultMap, currentNode)
 }
 

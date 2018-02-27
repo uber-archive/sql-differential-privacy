@@ -4,26 +4,26 @@ import com.uber.engsec.dp.analysis.histogram.{HistogramAnalysis, QueryType}
 import com.uber.engsec.dp.dataflow.AggFunctions.{AVG, COUNT, SUM}
 import com.uber.engsec.dp.dataflow.domain.UnitDomain
 import com.uber.engsec.dp.exception.UnsupportedQueryException
-import com.uber.engsec.dp.rewriting.Rewriter
 import com.uber.engsec.dp.rewriting.rules.ColumnDefinition.{rel, _}
 import com.uber.engsec.dp.rewriting.rules.Expr.{Sum, col, _}
 import com.uber.engsec.dp.rewriting.rules.Operations._
 import com.uber.engsec.dp.rewriting.rules._
-import com.uber.engsec.dp.schema.Schema
+import com.uber.engsec.dp.rewriting.{Rewriter, RewriterConfig}
+import com.uber.engsec.dp.schema.{Database, Schema}
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 import org.apache.calcite.rel.core._
 import org.apache.calcite.rel.rules.FilterProjectTransposeRule
 
-class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
+class SampleAndAggregateRewriter(config: SampleAndAggregateConfig) extends Rewriter(config) {
   /** Returns the number of partitions to use for the given table. Default is pow(n, 0.4), where n is the size of the
     * dataset, as recommended by Mohan et al. [1]. Selection of this value does not affect the privacy guarantee but may
     * impact utility.
     *
     * [1] https://dl.acm.org/citation.cfm?id=2213876
     */
-  def getNumPartitions(tableName: String): Int = {
-    val approxRowCount = Schema.getTableProperties(tableName).getOrElse("approxRowCount",
-      throw new IllegalArgumentException(s"Must define metric 'approxRowCount' for table '$tableName'")).toLong
+  def getNumPartitions(tableName: String, database: Database): Int = {
+    val approxRowCount = Schema.getTableProperties(database, tableName).getOrElse("approxRowCount",
+      throw new IllegalArgumentException(s"Must define metric 'approxRowCount' for table '$tableName' in database '$database'")).toLong
 
     math.floor(math.pow(approxRowCount, 0.4)).toInt
   }
@@ -78,9 +78,9 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
   def clamp(expr: ValueExpr, min: ValueExpr, max: ValueExpr): ValueExpr = Case(expr < min, min, Case(expr > max, max, expr))
 
   /** Rewriting function. */
-  def rewrite(root: Relation, config: SampleAndAggregateConfig): Relation = {
+  def rewrite(root: Relation): Relation = {
     // Reject unsupported queries.
-    val histogramResults = new HistogramAnalysis().run(root)
+    val histogramResults = new HistogramAnalysis().run(root, config.database)
     val queryType = QueryType.getQueryType(histogramResults)
 
     val aggregatedColumns = histogramResults.colFacts.filter(_.isAggregation)
@@ -104,7 +104,7 @@ class SampleAndAggregateRewriter extends Rewriter[SampleAndAggregateConfig] {
     val targetColSource = targetColAggregation.references.head
     val (tableName, colName) = (targetColSource.table, targetColSource.column)
 
-    val numPartitions = getNumPartitions(tableName)
+    val numPartitions = getNumPartitions(tableName, config.database)
     val rad = getWideningFactor(numPartitions)
 
     val groupingExpression = getPartitionExpression(tableName, numPartitions) AS "_grp"
@@ -230,5 +230,8 @@ case class SampleAndAggregateConfig(
    * goal is to use a value that is moderately conservative, so few values are clipped but no so great as to produce
    * a disproportionately large bin that skews the quartile estimation in Step #2.
    */
- lambda: Double
-)
+ lambda: Double,
+
+ /** The database being queried. */
+ override val database: Database
+) extends RewriterConfig(database)

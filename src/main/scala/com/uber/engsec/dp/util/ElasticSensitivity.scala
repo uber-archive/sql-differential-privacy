@@ -1,6 +1,7 @@
 package com.uber.engsec.dp.util
 
 import com.uber.engsec.dp.analysis.differential_privacy.ElasticSensitivityAnalysis
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.QueryParser
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 
@@ -25,11 +26,11 @@ object ElasticSensitivity {
     * @param k The desired distance from the true database
     * @return Elastic sensitivity of query at distance k
     */
-  def elasticSensitivity(query: Relation, k: Int): Double = {
+  def elasticSensitivity(query: Relation, database: Database, k: Int): Double = {
     val analysis = new ElasticSensitivityAnalysis()
     analysis.setK(k)
 
-    val result = analysis.analyzeQuery(query).colFacts
+    val result = analysis.analyzeQuery(query, database).colFacts
     assert (result.size == 1)  // this function works for single-column queries.
     result.head.sensitivity.get
   }
@@ -39,12 +40,12 @@ object ElasticSensitivity {
     * @param query The input query
     * @return Elastic sensitivities for every distance k from the true database (k = 0, 1, 2, ...)
     */
-  def elasticSensitivityStream(query: Relation, col: Int): Stream[Double] = {
+  def elasticSensitivityStream(query: Relation, database: Database, col: Int): Stream[Double] = {
     val analysis = new ElasticSensitivityAnalysis()
 
     Stream.from(0).map{ k =>
       analysis.setK(k)
-      val result = analysis.analyzeQuery(query).colFacts
+      val result = analysis.analyzeQuery(query, database).colFacts
       result(col).sensitivity.get
     }
   }
@@ -56,7 +57,7 @@ object ElasticSensitivity {
     * @param epsilon The desired privacy budget
     * @return The smoothed elastic sensitivity
     */
-  def smoothElasticSensitivity(query: Relation, col: Int, epsilon: Double): Double = {
+  def smoothElasticSensitivity(query: Relation, database: Database, col: Int, epsilon: Double): Double = {
     /** Calculates the smooth elastic sensitivity by recursively computing smooth sensitivity for each value of k
       * until the function decreases at k+1. Since elastic sensitivity increases polynomially (at worst) in k while the
       * smoothing factor decays exponentially in k, this provides the correct (maximum) smooth sensitivity without
@@ -70,7 +71,7 @@ object ElasticSensitivity {
       else sensitivityAtDistance(k+1, smoothSensitivity, esStream.tail)
     }
 
-    sensitivityAtDistance(0, 0, elasticSensitivityStream(query, col))
+    sensitivityAtDistance(0, 0, elasticSensitivityStream(query, database, col))
   }
 
   /** Produce a differentially private result for a query given its non-private result and the desired privacy budget.
@@ -80,9 +81,9 @@ object ElasticSensitivity {
     * @param epsilon The desired privacy budget (e.g. 0.1).
     * @return A differentially private answer to the input query.
     */
-  def addNoise(query: String, result: Double, epsilon: Double): Double = {
-    val tree = QueryParser.parseToRelTree(query)
-    val sensitivity = ElasticSensitivity.smoothElasticSensitivity(tree, 0, epsilon)
+  def addNoise(query: String, database: Database, result: Double, epsilon: Double): Double = {
+    val tree = QueryParser.parseToRelTree(query, database)
+    val sensitivity = ElasticSensitivity.smoothElasticSensitivity(tree, database, 0, epsilon)
     result + laplace(sensitivity / epsilon)
   }
 }

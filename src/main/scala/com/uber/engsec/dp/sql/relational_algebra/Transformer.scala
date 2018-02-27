@@ -25,7 +25,7 @@ import java.util
 import java.util.Properties
 
 import com.google.common.collect.ImmutableList
-import com.uber.engsec.dp.schema.{CalciteSchemaFromConfig, Schema}
+import com.uber.engsec.dp.schema.{CalciteSchemaFromConfig, Database}
 import org.apache.calcite.avatica.util.{Casing, Quoting}
 import org.apache.calcite.jdbc.CalciteSchema
 import org.apache.calcite.plan._
@@ -42,31 +42,43 @@ import org.apache.calcite.sql.validate.{SqlConformance, SqlConformanceEnum, SqlV
 import org.apache.calcite.sql2rel.{RelDecorrelator, SqlRexConvertletTable, SqlToRelConverter}
 import org.apache.calcite.tools._
 
+import scala.collection.mutable
+
 /** Transforms a SQL query to relational algebra using Calcite. */
 object Transformer {
-  val schema = new CalciteSchemaFromConfig
+  // Cache of framework configuration (includes schema, parsing options, etc.) for each database
+  val databaseConfig: mutable.Map[String, FrameworkConfig] = new mutable.HashMap[String, FrameworkConfig]
 
   val relTypeSystem: RelDataTypeSystem = new RelDataTypeSystemImpl() {}
-
-  val parserConfig = SqlParser.configBuilder
-    .setQuoting(Quoting.DOUBLE_QUOTE)
-    .setConformance(SqlConformanceEnum.LENIENT)
-    .setUnquotedCasing(Casing.UNCHANGED)
-    .setQuotedCasing(Casing.UNCHANGED)
-    .setCaseSensitive(false)
-    .build
-
-  val rootSchema = Frameworks.createRootSchema(true)
-
   val conformanceProperties = new Properties()
   conformanceProperties.setProperty("conformance", "LENIENT")
 
-  val config = Frameworks.newConfigBuilder
-    .defaultSchema(rootSchema.add(Schema.currentDb.namespace, schema))
-    .parserConfig(parserConfig)
-    .build
+  def getParserConfigForDialect(dialect: String): SqlParser.Config = {
+    SqlParser.configBuilder
+      .setQuoting(Quoting.DOUBLE_QUOTE)
+      .setConformance(SqlConformanceEnum.LENIENT)
+      .setUnquotedCasing(Casing.UNCHANGED)
+      .setQuotedCasing(Casing.UNCHANGED)
+      .setCaseSensitive(false)
+      .build
+  }
 
-  def create: Transformer = new Transformer(config)
+  def getConfigForDatabase(database: Database): FrameworkConfig = {
+    val rootSchema = Frameworks.createRootSchema(true)
+    val schema = new CalciteSchemaFromConfig(database)
+
+    val parserConfig = getParserConfigForDialect(database.dialect)
+
+    Frameworks.newConfigBuilder
+      .defaultSchema(rootSchema.add(database.namespace, schema))
+      .parserConfig(parserConfig)
+      .build
+  }
+
+  def create(database: Database): Transformer = {
+    val config = databaseConfig.getOrElseUpdate(database.database, getConfigForDatabase(database))
+    new Transformer(config)
+  }
 }
 
 class Transformer(val config: FrameworkConfig) {

@@ -27,6 +27,7 @@ import com.uber.engsec.dp.dataflow.column.NodeColumnFacts
 import com.uber.engsec.dp.rewriting.rules.Expr.ColumnReferenceByName
 import com.uber.engsec.dp.sql.relational_algebra.{Relation, Transformer}
 import org.apache.calcite.rel.logical.{LogicalProject, LogicalValues}
+import org.apache.calcite.tools.Frameworks
 
 /** Methods for specifying column references and definitions in rewriting operations. */
 
@@ -60,7 +61,13 @@ object ColumnDefinition {
   // Creates a relation from a list of column definitions
   def rel(cols: ColumnDefinition[Expr]*): Relation = columnDefsToRelation(cols)
   implicit def columnDefsToRelation(cols: Seq[ColumnDefinition[Expr]]): Relation = {
-    val inputRel = LogicalValues.createOneRow(Transformer.create.cluster)
+    val cluster = new Transformer(
+      Frameworks.newConfigBuilder
+        .defaultSchema(Frameworks.createRootSchema(true))
+        .build
+    ).cluster
+
+    val inputRel = LogicalValues.createOneRow(cluster)
     val projections = cols.map{ _.expr.toRex(Relation(inputRel)) }
     val rowType = Helpers.getRecordType( cols.zip(projections) )
     val result = LogicalProject.create(inputRel, projections.asJava, rowType)

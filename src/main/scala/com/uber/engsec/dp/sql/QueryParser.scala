@@ -25,6 +25,7 @@ package com.uber.engsec.dp.sql
 import com.facebook.presto.sql.parser.{SqlParser => PrestoSqlParser}
 import com.facebook.presto.sql.tree.{Query, Statement}
 import com.uber.engsec.dp.exception.ParsingException
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.ast.{Transformer => ASTTransformer}
 import com.uber.engsec.dp.sql.dataflow_graph.Node
 import com.uber.engsec.dp.sql.relational_algebra.{Relation, Transformer => RelTransformer}
@@ -64,11 +65,11 @@ object QueryParser {
     * @param query The SQL query to be parsed
     * @return The dataflow graph root node
     */
-  def parseToDataflowGraph(query: String): Node = {
+  def parseToDataflowGraph(query: String, database: Database): Node = {
     printQuery(query, "dataflow graph")
 
     val prestoRoot: Statement = parseToPrestoTree(query)
-    val transform = new ASTTransformer
+    val transform = new ASTTransformer(database)
     transform.convertToDataflowGraph(prestoRoot)
   }
 
@@ -76,10 +77,10 @@ object QueryParser {
     * @param query The SQL query to be parsed
     * @return The relational algebra tree root node
     */
-  def parseToRelTree(query: String): Relation = {
+  def parseToRelTree(query: String, database: Database): Relation = {
     printQuery(query, "relational algebra tree")
 
-    val transformer = RelTransformer.create
+    val transformer = RelTransformer.create(database)
     val root = transformer.convertToRelTree(query)
     Relation(root)
   }

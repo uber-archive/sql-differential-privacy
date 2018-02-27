@@ -1,9 +1,9 @@
 package com.uber.engsec.dp.rewriting.coverage
 
-import com.uber.engsec.dp.rewriting.Rewriter
 import com.uber.engsec.dp.rewriting.rules.ColumnDefinition._
 import com.uber.engsec.dp.rewriting.rules.Expr._
 import com.uber.engsec.dp.rewriting.rules.Operations._
+import com.uber.engsec.dp.rewriting.{Rewriter, RewriterConfig}
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 import org.apache.calcite.rel.logical.{LogicalAggregate, LogicalSort}
 import org.apache.calcite.rel.rules.FilterProjectTransposeRule
@@ -13,8 +13,8 @@ import scala.collection.JavaConverters._
 /**
   * Rewriter that calculates coverage of aggregation queries.
   */
-class CoverageRewriter extends Rewriter[Unit] {
-  override def rewrite(root: Relation, config: Unit): Relation = {
+class CoverageRewriter(config: RewriterConfig) extends Rewriter(config) {
+  override def rewrite(root: Relation): Relation = {
     /** Find first aggregation node (strip away projections and other post-processing of aggregation column). */
     val rootAggNode = root.collectFirst{ case Relation(l: LogicalAggregate) => l }.get
     val groupedColumns = rootAggNode.getGroupSet.asList.asScala.map { col(_) }

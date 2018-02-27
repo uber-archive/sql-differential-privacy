@@ -25,7 +25,7 @@ package com.uber.engsec.dp.sql.ast
 import com.facebook.presto.sql.tree.{AliasedRelation, AllColumns, ArithmeticBinaryExpression, ArithmeticUnaryExpression, AtTimeZone, BetweenPredicate, Cast, CoalesceExpression, ComparisonExpression, CurrentTime, DereferenceExpression, ExistsPredicate, Expression, Extract, FunctionCall, InListExpression, InPredicate, IsNotNullPredicate, IsNullPredicate, JoinOn, LikePredicate, Literal, LogicalBinaryExpression, LongLiteral, NotExpression, NullIfExpression, QualifiedNameReference, Query, QuerySpecification, Row, SearchedCaseExpression, SimpleCaseExpression, SingleColumn, SubqueryExpression, Table, TableSubquery, WhenClause, Except => PrestoExcept, Join => PrestoJoin, Node => PrestoNode, SelectItem => PrestoSelectItem, Union => PrestoUnion}
 import com.uber.engsec.dp.analysis.name_resolution.{NameResolution, NameResolutionAnalysis, ReferenceInfo}
 import com.uber.engsec.dp.exception._
-import com.uber.engsec.dp.schema.{DatabaseModel, Schema}
+import com.uber.engsec.dp.schema.{Database, DatabaseModel, Schema}
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, Reference, UnstructuredReference}
 import com.uber.engsec.dp.sql.dataflow_graph.relation._
 import com.uber.engsec.dp.sql.dataflow_graph.{Node => DFGNode}
@@ -37,7 +37,7 @@ import scala.collection.mutable
 
 /** Transforms a parsed AST (Presto tree) into a dataflow graph.
   */
-class Transformer {
+class Transformer(database: Database) {
   private val prestoReferences: IdentityHashMap[PrestoNode, ReferenceInfo] = IdentityHashMap.empty
   private val prestoToDFGNode: IdentityHashMap[PrestoNode, DFGNode] = IdentityHashMap.empty
   private val inferredSchemaForTables: mutable.HashMap[String, mutable.Set[String]] with mutable.MultiMap[String, String] = new mutable.HashMap[String, mutable.Set[String]] with mutable.MultiMap[String, String]
@@ -47,7 +47,7 @@ class Transformer {
     if (!statement.isInstanceOf[Query])
       throw new IllegalArgumentException("convertToDataflowGraph can only be called on an AST (Presto) tree (Query node), found type " + statement.getClass().getSimpleName)
 
-    val nameResolutionResults: NameResolution = new NameResolutionAnalysis().run(statement)
+    val nameResolutionResults: NameResolution = new NameResolutionAnalysis().run(statement, database)
 
     prestoToDFGNode.clear()
     prestoReferences.clear()
@@ -239,17 +239,17 @@ class Transformer {
           } else {
             // It's not an aliased table, create a new DataTable node.
             val tableName = DatabaseModel.normalizeTableName(table.getName.toString)
-            if (Schema.getSchemaMapForTable(tableName).isEmpty && Transformer.isStrictMode())
+            if (Schema.getSchemaMapForTable(database, tableName).isEmpty && Transformer.isStrictMode())
               throw new UndefinedSchemaException(tableName)
 
-            val configSchema = Schema.getSchemaForTable(tableName).map{ _.name }.toList
+            val configSchema = Schema.getSchemaForTable(database, tableName).map{ _.name }.toList
             val effectiveSchema =
               if (Transformer.isBestEffortMode())
                 mergeSchemas(configSchema, inferredSchemaForTables.getOrElse(tableName, Set()).toSet)
               else
                 configSchema
 
-            DataTable(tableName, effectiveSchema.toIndexedSeq)
+            DataTable(tableName, database, effectiveSchema.toIndexedSeq)
           }
 
         case join: PrestoJoin =>

@@ -23,6 +23,7 @@
 package com.uber.engsec.dp.sql.ast
 
 import com.uber.engsec.dp.exception._
+import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import com.uber.engsec.dp.sql.dataflow_graph.Node
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, UnstructuredReference}
@@ -32,6 +33,7 @@ import junit.framework.TestCase
 /** These tests verify that certain types of queries can be parsed and transformed to dataflow graphs.
   */
 class TreeTransformationTest extends TestCase {
+  val database = Schema.getDatabase("test")
 
   /** Compares a parsed dataflow graph against an expected result (represented by a string encoding the tree structure
     * in a basic syntax inspired by the TreePrinter's output -- see tests below for examples). This method is used by
@@ -42,7 +44,7 @@ class TreeTransformationTest extends TestCase {
                             schemaMode: Transformer.SCHEMA_MODE.Value = Transformer.SCHEMA_MODE.STRICT) {
     System.out.println("Query: " + queryStr)
     Transformer.schemaMode = schemaMode
-    val root = QueryParser.parseToDataflowGraph(queryStr)
+    val root = QueryParser.parseToDataflowGraph(queryStr, database)
     TestCase.assertEquals(treeStructure.trim().replaceAll("\n      ", "\n"), CompactTreePrinter.printTree(root))
     println("Test passed!\n")
   }
@@ -55,7 +57,7 @@ class TreeTransformationTest extends TestCase {
     try {
       System.out.println("Query: " + queryStr)
       Transformer.schemaMode = schemaMode
-      val tree = QueryParser.parseToDataflowGraph(queryStr)
+      val tree = QueryParser.parseToDataflowGraph(queryStr, database)
       TestCase.fail("Unexpected successful transformation (was expecting exception " + expectedException.getSimpleName + ")")
     }
     catch {

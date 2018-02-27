@@ -23,12 +23,13 @@
 package com.uber.engsec.dp.sql.dataflow_graph.relation
 
 import com.facebook.presto.sql.tree.{Node => PrestoNode}
-import com.uber.engsec.dp.schema.Schema
+import com.uber.engsec.dp.schema.{Database, Schema}
 
 /** A DataTable is a leaf node of that represents a table in the database.
   */
 case class DataTable(
     name: String,
+    database: Database,
     override val columnNames: IndexedSeq[String])
     (implicit override val prestoSource: Option[PrestoNode] = None)
   extends Relation(columnNames, prestoSource ) {
@@ -40,13 +41,9 @@ case class DataTable(
   /** Metadata properties (from the schema config file) for the columns in this table.
     */
   lazy val colProperties: IndexedSeq[Map[String,String]] = {
-    val colMap = Schema.getSchemaMapForTable(name)
+    val colMap = Schema.getSchemaMapForTable(database, name)
     columnNames.map { colName => colMap.get(colName).fold(Map.empty[String,String])(_.properties) }
   }
-
-  /** Metadata for this table from the schema config file.
-    */
-  val properties = Schema.tables.get(name).map{ _.properties }.getOrElse(Map.empty)
 
   override def toString: String = name
 }

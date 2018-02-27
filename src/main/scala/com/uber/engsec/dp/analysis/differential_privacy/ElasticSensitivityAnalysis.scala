@@ -26,7 +26,7 @@ import com.uber.engsec.dp.analysis.histogram.{HistogramAnalysis, QueryType}
 import com.uber.engsec.dp.dataflow.AggFunctions._
 import com.uber.engsec.dp.dataflow.column.{NodeColumnFacts, RelNodeColumnAnalysis}
 import com.uber.engsec.dp.exception.{UnsupportedConstructException, UnsupportedQueryException}
-import com.uber.engsec.dp.schema.Schema
+import com.uber.engsec.dp.schema.{Database, Schema}
 import com.uber.engsec.dp.sql.relational_algebra._
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Aggregate, Join, TableScan}
@@ -45,14 +45,14 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   var k: Int = 0
   val checkBinsForRelease: Boolean = System.getProperty("dp.check_bins", "true").toBoolean
 
-  override def run(_root: RelOrExpr): NodeColumnFacts[RelStability,ColSensitivity] = {
+  override def run(_root: RelOrExpr, database: Database): NodeColumnFacts[RelStability,ColSensitivity] = {
     /** Push predicates into joins, in order to support queries with equijoin conditions specified in filters
       * (e.g., SELECT a JOIN b WHERE a.x = b.x, which is semantically equivalent to SELECT a JOIN b ON a.x = b.x)
       */
     val root = RelUtils.pushFiltersOnJoins(_root.unwrap.asInstanceOf[RelNode])
 
     /** Reject non-statistical and non-counting queries. */
-    val histogramResults = new HistogramAnalysis().run(root)
+    val histogramResults = new HistogramAnalysis().run(root, database)
     val queryType = QueryType.getQueryType(histogramResults)
 
     val isQuerySupported =
@@ -62,7 +62,7 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
     if (!isQuerySupported) throw new UnsupportedQueryException("This analysis works only on counting queries")
 
     /** Run the analysis. */
-    val results = super.run(root)
+    val results = super.run(root, database)
 
     /** Print helpful error message if any column sensitivity is infinite due to post-processed aggregation results
       * (e.g., SELECT COUNT(*)+1000 FROM ORDERS), which this analysis does not currently support.
@@ -87,7 +87,6 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   override def transferAggregate(node: Aggregate,
                                  aggFunctions: IndexedSeq[Option[AggFunction]],
                                  state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
-
     val numGroupedCols = aggFunctions.count{ _.isEmpty }
     val newNodeFact =
       // Histograms introduce a factor of 2 to the stability of the relation
@@ -132,12 +131,12 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
                                  state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
     // Fetch metadata for the table
     val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    val isTablePublic = RelUtils.getTableProperties(node).get("isPublic").fold(false)(_.toBoolean)
+    val isTablePublic = RelUtils.getTableProperties(node, this.getDatabase).get("isPublic").fold(false)(_.toBoolean)
 
     val newColFacts = state.colFacts.zipWithIndex.map { case (colState, idx) =>
       // Fetch metadata for this column
       val colName = node.getRowType.getFieldNames.get(idx)
-      val colProperties = Schema.getSchemaMapForTable(tableName)(colName).properties
+      val colProperties = Schema.getSchemaMapForTable(this.getDatabase, tableName)(colName).properties
 
       val colMaxFreq = colProperties.get("maxFreq").fold(Double.PositiveInfinity)(_.toDouble)
       val maxFreqAtK = if (isTablePublic) colMaxFreq else (colMaxFreq + k)

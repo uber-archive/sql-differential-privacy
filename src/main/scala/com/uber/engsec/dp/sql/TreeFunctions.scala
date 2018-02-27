@@ -22,6 +22,8 @@
 
 package com.uber.engsec.dp.sql
 
+import com.uber.engsec.dp.schema.Database
+
 /** Common trait for all query representations (AST, dataflow graph, and relational algebra tree).
   *
   * @tparam N Node type of tree.
@@ -33,7 +35,7 @@ abstract trait TreeFunctions[N] {
 
   /** Parses and converts the given SQL string query to this tree type.
     */
-  def parseQueryToTree(query: String): N
+  def parseQueryToTree(query: String, database: Database): N
 
   /** Prints the tree for debugging.
     */

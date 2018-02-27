@@ -22,6 +22,7 @@
 
 package com.uber.engsec.dp.analysis.histogram
 
+import com.uber.engsec.dp.schema.Database
 import org.apache.calcite.rel.RelNode
 
 /** Classification of queries: histogram, non-histogram statistical, and raw data. */
@@ -65,8 +66,8 @@ object QueryType extends Enumeration {
   }
 
   /** Categorize the query using an already parsed tree. */
-  def getQueryType(root: RelNode): QueryType = {
-    val results = new HistogramAnalysis().run(root)
+  def getQueryType(root: RelNode, database: Database): QueryType = {
+    val results = new HistogramAnalysis().run(root, database)
     getQueryType(results)
   }
 }

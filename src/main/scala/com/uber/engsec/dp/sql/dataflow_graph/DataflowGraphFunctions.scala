@@ -22,11 +22,12 @@
 
 package com.uber.engsec.dp.sql.dataflow_graph
 
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.{AbstractAnalysis, QueryParser, TreeFunctions, TreePrinter}
 
 trait DataflowGraphFunctions extends TreeFunctions[Node] {
   this: AbstractAnalysis[Node, _] =>
   override def getNodeChildren(node: Node): Iterable[Node] = node.children
-  override def parseQueryToTree(query: String): Node = QueryParser.parseToDataflowGraph(query)
+  override def parseQueryToTree(query: String, database: Database): Node = QueryParser.parseToDataflowGraph(query, database)
   override def printTree(node: Node) = TreePrinter.printTree(node, resultMap, currentNode)
 }

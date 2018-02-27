@@ -22,7 +22,7 @@
 
 package com.uber.engsec.dp.sql.relational_algebra
 
-import com.uber.engsec.dp.schema.Schema
+import com.uber.engsec.dp.schema.{Database, Schema}
 import org.apache.calcite.plan.hep.{HepPlanner, HepProgram}
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Join, TableScan}
@@ -76,14 +76,10 @@ object RelUtils {
 
   /** Converts the given relational algebra tree to a SQL string.
     */
-  def relToSql(rel: RelNode): String = {
-    val configDialect = Schema.currentDb.dialect
-    if (configDialect == null)
-      throw new IllegalArgumentException("Dialect must be specified in schema config file.")
-
-    val dialect = DatabaseProduct.valueOf(configDialect.toUpperCase).getDialect
-    val converter = new RelToSqlConverter(dialect)
-    converter.visitChild(0, rel).asStatement.toSqlString(dialect).getSql
+  def relToSql(rel: RelNode, dialect: String): String = {
+    val _dialect = DatabaseProduct.valueOf(dialect.toUpperCase).getDialect
+    val converter = new RelToSqlConverter(_dialect)
+    converter.visitChild(0, rel).asStatement.toSqlString(_dialect).getSql
   }
 
   /** Returns a new tree with filter predicates pushed down into join nodes (where possible).
@@ -109,20 +105,19 @@ object RelUtils {
   /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
     * config is defined for the table.
     */
-  def getTableProperties(node: TableScan): Map[String, String] = {
+  def getTableProperties(node: TableScan, database: Database): Map[String, String] = {
     import scala.collection.JavaConverters._
     val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    Schema.getTableProperties(tableName)
+    Schema.getTableProperties(database, tableName)
   }
 
   /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
     * config is defined for the table/column.
     */
-  def getColumnProperties(node: TableScan, colIdx: Int): Map[String, String] = {
+  def getColumnProperties(node: TableScan, colIdx: Int, database: Database): Map[String, String] = {
     import scala.collection.JavaConverters._
     val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
     val colName = node.getRowType.getFieldNames.get(colIdx)
-    Schema.getSchemaMapForTable(tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
+    Schema.getSchemaMapForTable(database, tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
   }
-
 }

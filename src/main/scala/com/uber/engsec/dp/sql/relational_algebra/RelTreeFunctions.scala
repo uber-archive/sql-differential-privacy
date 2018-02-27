@@ -22,6 +22,7 @@
 
 package com.uber.engsec.dp.sql.relational_algebra
 
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.{AbstractAnalysis, QueryParser, TreeFunctions, TreePrinter}
 import org.apache.calcite.rel.core._
 import org.apache.calcite.rex._
@@ -34,8 +35,8 @@ trait RelTreeFunctions extends TreeFunctions[RelOrExpr] {
   this: AbstractAnalysis[RelOrExpr, _] =>
   override def getNodeChildren(node: RelOrExpr): Iterable[RelOrExpr] = RelTreeFunctions.getChildren(node)
 
-  override def parseQueryToTree(query: String): RelOrExpr = {
-    QueryParser.parseToRelTree(query)
+  override def parseQueryToTree(query: String, database: Database): RelOrExpr = {
+    QueryParser.parseToRelTree(query, database)
   }
 
   override def printTree(node: RelOrExpr): Unit = TreePrinter.printRelTree(node, resultMap, currentNode)

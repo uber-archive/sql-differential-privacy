@@ -22,18 +22,19 @@
 
 package com.uber.engsec.dp.rewriting.mechanism
 
-import com.uber.engsec.dp.rewriting.Rewriter
 import com.uber.engsec.dp.rewriting.rules.ColumnDefinition._
 import com.uber.engsec.dp.rewriting.rules.DPExpr
 import com.uber.engsec.dp.rewriting.rules.Operations._
+import com.uber.engsec.dp.rewriting.{Rewriter, RewriterConfig}
+import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 import com.uber.engsec.dp.util.ElasticSensitivity
 
-class ElasticSensitivityRewriter extends Rewriter[ElasticSensitivityConfig] {
-  def rewrite(root: Relation, config: ElasticSensitivityConfig): Relation = {
+class ElasticSensitivityRewriter(config: ElasticSensitivityConfig) extends Rewriter(config) {
+  def rewrite(root: Relation): Relation = {
     root mapCols { col =>
       // Compute the smooth elastic sensitivity for the column.
-      val smoothSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, col.idx, config.epsilon)
+      val smoothSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, config.database, col.idx, config.epsilon)
 
       if (smoothSensitivity == 0)
         // No noise added to histogram bins that are marked safe for release.
@@ -49,5 +50,8 @@ class ElasticSensitivityRewriter extends Rewriter[ElasticSensitivityConfig] {
 
 case class ElasticSensitivityConfig(
   /** The privacy budget. */
-  epsilon: Double
-)
+  epsilon: Double,
+
+  /** The database being queried. */
+  override val database: Database
+) extends RewriterConfig(database)
