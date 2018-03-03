@@ -51,8 +51,8 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), true),
-      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), false, true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -63,8 +63,20 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_date")), true),
-      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_date")), false, true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), true, false)
+    )
+
+    TestCase.assertEquals(expectedResult, actualResult)
+  }
+
+  def testModifiedHistogramBin() = {
+    val query = "SELECT order_date+1 as bin, COUNT(*) FROM orders GROUP BY bin"
+    val actualResult = getResults(query)
+
+    val expectedResult = List(
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_date")), true, true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -76,8 +88,8 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), true),
-      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "product_id")), false, true),
+      AggregationInfo(true, Some(COUNT), Set(QualifiedColumnName("public.orders", "*")), true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -88,7 +100,7 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_id")), false)
+      AggregationInfo(false, Bottom, Set(QualifiedColumnName("public.orders", "order_id")), false, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -101,7 +113,7 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(true, Top, Set(QualifiedColumnName("public.products", "price"), QualifiedColumnName("public.products", "*")), false)
+      AggregationInfo(true, Top, Set(QualifiedColumnName("public.products", "price"), QualifiedColumnName("public.products", "*")), true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -112,7 +124,7 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(true, COUNT, Set.empty, false)
+      AggregationInfo(true, COUNT, Set.empty, true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)
@@ -124,9 +136,9 @@ class HistogramAnalysisTest extends TestCase {
     val actualResult = getResults(query)
 
     val expectedResult = List(
-      AggregationInfo(true, COUNT, Set(QualifiedColumnName("public.products", "*")), false),
-      AggregationInfo(true, SUM, Set(QualifiedColumnName("public.products", "price")), false),
-      AggregationInfo(true, AVG, Set(QualifiedColumnName("public.products", "price")), false)
+      AggregationInfo(true, COUNT, Set(QualifiedColumnName("public.products", "*")), true, false),
+      AggregationInfo(true, SUM, Set(QualifiedColumnName("public.products", "price")), true, false),
+      AggregationInfo(true, AVG, Set(QualifiedColumnName("public.products", "price")), true, false)
     )
 
     TestCase.assertEquals(expectedResult, actualResult)

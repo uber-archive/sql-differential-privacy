@@ -130,6 +130,9 @@ object Schema {
     tables.get(normalizedTableName).map{ _.columnMap }.getOrElse(Map.empty)
   }
 
+  /** Retrieves the config properties for the database table represented by the given table. Returns empty map if no
+    * config is defined for the table.
+    */
   def getTableProperties(database: Database, tableName: String): Map[String, String] = getTableProperties(database.database, tableName)
   def getTableProperties(database: String, tableName: String): Map[String, String] = {
     val tables = getTableMapForDatabase(database)

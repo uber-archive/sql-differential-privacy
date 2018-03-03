@@ -85,7 +85,7 @@ object Rewriter {
 /** Dummy class to store relations that are to be defined as WITH clauses in the rewritten query (the relational
   * algebra tree has no representation for this since it does not admit aliases).
   */
-class WithTable(val definition: Relation, val alias: String) extends TableScan(
+case class WithTable(definition: Relation, alias: String) extends TableScan(
   definition.getCluster,
   definition.getCluster.traitSetOf(Convention.NONE),
   new RelOptAbstractTable(null, alias, definition.getRowType) {}) {
@@ -97,6 +97,27 @@ class WithTable(val definition: Relation, val alias: String) extends TableScan(
   }
 }
 
+/** Flags for all rewriters */
 class RewriterConfig(val database: Database)
+
+/** Flags for differential privacy-based rewriters */
+class DPRewriterConfig(
+    /** The privacy budget allocated to this query. Callers are responsible for tracking the remaining budget. */
+    val epsilon: Double,
+
+    /** The database being queried. */
+    override val database: Database,
+
+    /** Should rewriter add logic to automatically insert histogram bins from domain? This flag should be true if
+      * query results are released directly.
+      *
+      * This is necessary for histogram queries since a DP mechanism must return a noisy result for all records in the
+      * domain - including those not appearing in the output - in order to avoid leaking information via the presence or
+      * absence of a bin. If this flag is true, missing bins will be populated with noisy empty results, and query
+      * rewriting will fail if this cannot be achieved.
+      */
+    val fillMissingBins: Boolean)
+  extends RewriterConfig(database)
+
 
 class RewritingException(val msg: String) extends RuntimeException(msg)

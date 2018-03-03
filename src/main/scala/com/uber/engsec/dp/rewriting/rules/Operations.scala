@@ -3,17 +3,18 @@ package com.uber.engsec.dp.rewriting.rules
 import com.google.common.collect.{ImmutableList, ImmutableSet}
 import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis
 import com.uber.engsec.dp.dataflow.domain.AbstractDomain
-import com.uber.engsec.dp.rewriting.rules.Expr.{ColumnReference, ColumnReferenceByName, ColumnReferenceByOrdinal, Predicate, QualifiedColumnReference, RelationQualifier, SimpleValueExpr, rexBuilder}
+import com.uber.engsec.dp.rewriting.rules.Expr.{ColumnReference, ColumnReferenceByName, ColumnReferenceByOrdinal, EnsureAlias, Predicate, QualifiedColumnReference, RelationQualifier, SimpleValueExpr, rexBuilder}
 import com.uber.engsec.dp.rewriting.{RewritingException, WithTable}
-import com.uber.engsec.dp.sql.relational_algebra.Relation
+import com.uber.engsec.dp.schema.Database
+import com.uber.engsec.dp.sql.relational_algebra.{Relation, Transformer}
 import com.uber.engsec.dp.sql.{AbstractAnalysis, TreePrinter}
-import org.apache.calcite.plan.RelOptRule
+import org.apache.calcite.plan._
 import org.apache.calcite.plan.hep.{HepPlanner, HepProgram}
-import org.apache.calcite.rel.`type`.{RelDataTypeField, RelDataTypeFieldImpl, RelRecordType, StructKind}
+import org.apache.calcite.rel._
+import org.apache.calcite.rel.`type`._
 import org.apache.calcite.rel.core._
 import org.apache.calcite.rel.logical._
-import org.apache.calcite.rel.{RelCollationImpl, RelCollations, RelFieldCollation, RelNode}
-import org.apache.calcite.rex.{RexCall, RexInputRef, RexLiteral, RexNode}
+import org.apache.calcite.rex._
 import org.apache.calcite.sql.SqlUtil
 import org.apache.calcite.util.ImmutableBitSet
 
@@ -58,14 +59,14 @@ object Operations {
   /** Rewriting operations for aggregation relations.
     */
   implicit class AggregateRewritingOperations(root: Aggregate) {
-    /** Adds a grouped column to the present aggregation node.
+    /** Adds a grouped column to the current aggregation node.
       *
       * @param col Column definition for new aggregation.
       * @return New aggregation relation.
       */
     def addGroupedColumn(col: ColumnReference): Relation = addGroupedColumns(col)
 
-    /** Adds grouped column(s) to the present aggregation node.
+    /** Adds grouped column(s) to the current aggregation node.
       *
       * @param cols Column definitions for new aggregation.
       * @return New aggregation relation.
@@ -118,19 +119,19 @@ object Operations {
         val rewrittenNode = transformation(newNode, node, ctx)
 
         /** Make sure rewriter does not disrupt ordering of columns. Rewriting rules may append new columns but may not
-          * modify any of the original columns, otherwise a parent node could reference the wrong column if its
-          * ordinal has changed.
+          * modify any of the original columns, otherwise a parent node could reference the wrong column if its ordinal
+          * has changed.
           */
-        val oldColumns = node.getRowType.getFieldList.asScala
-        val newColumns = rewrittenNode._1.unwrap.getRowType.getFieldList.asScala
+        val oldColumns = node.getRowType.getFieldNames.asScala
+        val newColumns = rewrittenNode._1.unwrap.getRowType.getFieldNames.asScala
 
         if (!newColumns.startsWith(oldColumns)) {
           newNode = rewrittenNode._1
-          val colString = newColumns.map{_.getName}.diff(oldColumns.map{_.getName}).mkString("[", ", ", "]")
-          throw new RuntimeException(s"To preserve semantics, recursive rewriters must keep original columns in the same order. " +
+          val colString = newColumns.diff(oldColumns).mkString("[", ", ", "]")
+          throw new RuntimeException(s"Rewriters must keep original columns in the same order. " +
             s"The following column(s) must be removed or projected to the end of the relation: $colString\n" +
-            s"Original schema: ${oldColumns.map(_.getName)}\n" +
-            s"New schema:      ${newColumns.map(_.getName)}")
+            s"Original schema: $oldColumns\n" +
+            s"New schema:      $newColumns")
         }
 
         rewrittenNode
@@ -160,6 +161,28 @@ object Operations {
       }
     }
 
+    /** Replaces the immediate inputs of the given relation.
+      *
+      * @param transformation Transformation rule (function) applied to each input of the current node.
+      * @return New relation.
+      */
+    def replaceInputs(transformation: List[Relation] => List[Relation]): Relation = {
+      val oldChildren = root.getInputs.asScala.map{ Relation }.toList
+      val newChildren = transformation(oldChildren)
+
+      if (oldChildren.length != newChildren.length)
+        throw new RewritingException("Input list size mismatch")
+
+      val newRoot =
+        if (oldChildren != newChildren)
+        // If any children were modified, clone the current node to reference the new children and fix column references in join condition if necessary.
+          remapChildren(root, oldChildren, newChildren)
+        else
+          root
+
+      Relation(newRoot)
+    }
+
     /** Rewrite the relation according to given recursive dataflow/rewriting function.
       *
       * @param domain Abstract domain for dataflow analysis.
@@ -172,9 +195,9 @@ object Operations {
       Relation(newRoot)
     }
 
-    /** Joins the present relation (left) with the given relation (right) using the provided condition expression.
+    /** Joins the current relation (left) with the given relation (right) using the provided condition expression.
       *
-      * @param other Relation with which to join the present relation.
+      * @param other Relation with which to join the current relation.
       * @param condition Join condition expression. Expressions may reference columns in either relation, and may be
       *                  qualified using left(col) or right(col) to disambiguate columns with identical names.
       * @param joinType Type of join.
@@ -201,9 +224,9 @@ object Operations {
       _rewriteColumns( _.map{ transformationRule } )
     }
 
-    /** Creates a union of the present relation with the provided relation.
+    /** Creates a union of the current relation with the provided relation.
       *
-      * @param other Relation with which to union present relation. Must have same number of columns as present
+      * @param other Relation with which to union current relation. Must have same number of columns as present
       *              relation, with compatible data types (i.e., each pair of columns must share a common supertype).
       * @param all Keep all values (true) or remove duplicate values (false)
       * @return Union relation.
@@ -215,7 +238,7 @@ object Operations {
 
     /** Create a new aggregation of the current relation.
       *
-      * @param groups Grouped columns in the aggregation. Must reference only columns from the present relation.
+      * @param groups Grouped columns in the aggregation. Must reference only columns from the current relation.
       * @param aggregations Aggregation function to be applied to each group.
       * @return Aggregation relation.
       */
@@ -246,7 +269,7 @@ object Operations {
 
     /** Filters the relation according to the provided predicate (e.g., using Sql's SELECT _ WHERE ... clause).
       *
-      * @param predicate Filter condition, which may reference columns in the present relation.
+      * @param predicate Filter condition, which may reference columns in the current relation.
       * @return Filtered relation.
       */
     def filter(predicate: Predicate): Relation = {
@@ -257,7 +280,7 @@ object Operations {
 
     /** Preserve only the given column(s) in the relation, discarding all the other columns.
       *
-      * @param columns Column references for the present relation.
+      * @param columns Column references for the current relation.
       * @return New relation preserving only referenced columns.
       */
     def keep(columns: ColumnReference*): Relation = {
@@ -267,7 +290,8 @@ object Operations {
 
     /** Discard the given column(s) from the relation, preserving all other columns.
       *
-      * @param columns Columns to remove from relation schema.
+      * @param columns Columns to remove from relation schema. For column references by name, only the first matching
+      *                column is removed. To remove multiple columns with the same name, use the [removeAll] method.
       * @return New relation excluding discarded columns.
       */
     def remove(columns: ColumnReference*): Relation = {
@@ -275,10 +299,34 @@ object Operations {
       _rewriteColumns(_.filter{ col => !indicesToRemove.contains(col.idx) } )
     }
 
+    /** Discard all columns matching the given column names.
+      *
+      * @param columns Columns to remove from relation schema.
+      * @return New relation excluding discarded columns.
+      */
+    def removeAll(columns: String*): Relation = {
+      val colNamesToRemove = columns.toSet
+      _rewriteColumns(_.filter{ col => !colNamesToRemove.contains(col.alias) } )
+    }
+
+    /** Renames the given column with the new alias.
+      *
+      * @param column Column to rename. The alias provided in the column definition replaces this column's original alias.
+      * @return New relation with column renamed.
+      */
+    def rename(column: ColumnDefinitionWithAlias[ColumnReference]): Relation = {
+      val colIdxToRename = lookupColumnOrdinal(root, column.expr)
+      _rewriteColumns({ cols =>
+        val colDefToRename = cols(colIdxToRename)
+        val newColDefinition = ColumnDefinitionWithAlias(EnsureAlias(colDefToRename.expr), column.alias)
+        cols.updated(colIdxToRename, newColDefinition)
+      })
+    }
+
     /** Join a relation with itself according to the provided join condition.
       *
-      * @param alias Name for present relation. Self joins require aliased relations so that relation definition will
-      *              not be duplicated in output query. If the present relation is already an alias-defined relation,
+      * @param alias Name for current relation. Self joins require aliased relations so that relation definition will
+      *              not be duplicated in output query. If the current relation is already an alias-defined relation,
       *              this parameter value is ignored and the existing alias is used instead.
       * @param condition Join condition. See join method for information about join condition expressions.
       * @return Join relation.
@@ -293,7 +341,7 @@ object Operations {
 
     /** Create the given column projections in the relation.
       *
-      * @param columns Columns to project from the present relation.
+      * @param columns Columns to project from the current relation.
       * @return New relation.
       */
     def project(columns: ColumnDefinition[ValueExpr]*): Relation ={
@@ -302,7 +350,7 @@ object Operations {
 
     /** Sort the relation according to the given column.
       *
-      * @param col Column from present relation by which to sort
+      * @param col Column from current relation by which to sort
       * @param ascending Sort direction
       * @return New relation.
       */
@@ -326,14 +374,27 @@ object Operations {
       Relation(newNode)
     }
 
-    /** Create an alias for the given relation, causing it to be defined as a view (WITH clause) in emitted SQL query.
+    /** Ensures the current relation is defined with an explicit alias, if necessary embedding its definition in a view
+      * (WITH clause) in emitted SQL. If the relation already has an alias, the [alias] argument is ignored and this
+      * method returns the current relation unmodified.
       *
-      * @param alias Name for the present relation.
+      * This method can be used to make the output query more concise when a relation is referenced multiple times
+      * in rewriting operations by ensuring the relation's definition appears only once in the output. For certain
+      * databases this can also improve the performance of rewritten queries (note: the database may need to be
+      * configured to materialize views in order to realize this performance benefit).
+      *
+      * @param alias Name for the relation, used only if relation does not already have an alias.
       * @return New relation, which will automatically insert an alias definition clause when converted to SQL.
       */
-    def asAlias(alias: String): Relation = Relation(new WithTable(root, alias))
+    def asAlias(alias: String): Relation = {
+      root.unwrap match {
+        case w: WithTable => root  // asAlias() was already called on this relation
+        case t: TableScan => root  // tables always have a name
+        case _ => Relation(WithTable(root, alias))
+      }
+    }
 
-    /** Optimizes the present relation, transforming it into a semantically equivalent relation, according to the given
+    /** Optimizes the current relation, transforming it into a semantically equivalent relation, according to the given
       * optimization rule.
       *
       * @param rule Optimization rule. For more information see [[org.apache.calcite.rel.rules]].
@@ -362,6 +423,14 @@ object Operations {
     }
   }
 
+  /** Creates a relation defined by the given database table. */
+  def table(name: String, database: Database): Relation = {
+    val transformer = Transformer.create(database)
+    val table = transformer.catalogReader.getTable(name.split('.').toList.asJava)
+    if (table == null) throw new RewritingException(s"Cannot find table '${name}' in schema.")
+    Relation(transformer.sqlToRelConverter.toRel(table))
+  }
+
   def rewriteProjections(node: LogicalProject, newProjects: Seq[RexNode]): LogicalProject =
     LogicalProject.create(node.getInput, newProjects.asJava, node.getRowType)
 }
@@ -382,13 +451,20 @@ object Helpers {
       case _ => None
     }
 
-    if (qualifier.isDefined && !node.isInstanceOf[LogicalJoin])
-      throw new RuntimeException(s"${qualifier.get}(${column.toString}): Qualified column references may only be used on Join nodes")
+    val (targetRelation, idxOffset) =
+      if (qualifier.isDefined) {
+        val targetJoinNode = node match {
+          case WithTable(Relation(j: LogicalJoin), _) => j
+          case j: LogicalJoin => j
+          case _ => throw new RewritingException(s"${qualifier.get}(${column.toString}): Qualified column references may only be used on Join nodes")
+        }
 
-    val (targetRelation, idxOffset) = node match {
-      case j: LogicalJoin if qualifier.contains(Expr.right) => (j.getInput(1), j.getInput(0).getRowType.getFieldCount)
-      case _ => (node, 0)
-    }
+        qualifier.get match {
+          case Expr.left => (targetJoinNode.getInput(0), 0)
+          case Expr.right => (targetJoinNode.getInput(1), targetJoinNode.getInput(0).getRowType.getFieldCount)
+        }
+
+      } else (node, 0)
 
     column match {
       case ColumnReferenceByOrdinal(idx) => idx + idxOffset

@@ -94,6 +94,12 @@ abstract class AbstractAnalysis[N <: AnyRef, T] extends TreeFunctions[N] {
   /** Returns the current database being queried. */
   def getDatabase: Database = currentDb.get
 
+  /** Runs the analysis on the tree and returns a map from nodes in the tree to analysis state at that node. */
+  def runAll(root: N, database: Database): mutable.HashMap[N, T] = {
+    run(root, database)
+    resultMap
+  }
+
   /******************************************************************************************************************
    * Analysis engine internals.
    ******************************************************************************************************************/

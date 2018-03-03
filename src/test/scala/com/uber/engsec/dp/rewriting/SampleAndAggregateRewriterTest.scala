@@ -22,7 +22,8 @@
 
 package com.uber.engsec.dp.rewriting
 
-import com.uber.engsec.dp.rewriting.mechanism.{SampleAndAggregateConfig, SampleAndAggregateRewriter}
+import com.uber.engsec.dp.exception.UnsupportedQueryException
+import com.uber.engsec.dp.rewriting.differential_privacy.{SampleAndAggregateConfig, SampleAndAggregateRewriter}
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import junit.framework.TestCase
@@ -30,14 +31,33 @@ import junit.framework.TestCase
 class SampleAndAggregateRewriterTest extends TestCase {
   val database = Schema.getDatabase("test")
 
+  def assertUnsupported(query: String) {
+    try {
+      checkResult(query, 0.1, 1, "")
+    }
+    catch {
+      case e: UnsupportedQueryException => // Pass!
+      case e: Exception => TestCase.fail("Wrong exception type")
+    }
+  }
+
   def checkResult(query: String, epsilon: Double, lambda: Double, expected: String): Unit = {
     val root = QueryParser.parseToRelTree(query, database)
-    val config = SampleAndAggregateConfig(epsilon, lambda, database)
+    val config = new SampleAndAggregateConfig(epsilon, lambda, database)
     val result = new SampleAndAggregateRewriter(config).run(root)
     TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql())
   }
 
-  def testStatisticalQuery() = {
+  def testUnsupportedQueries() = {
+    List(
+      // max function not supported (non private)
+      "SELECT MAX(quantity) FROM orders WHERE product_id = 1",
+      // the mechanism cannot handle queries with joins
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = 1",
+    ).foreach{ assertUnsupported }
+  }
+
+  def testAvgQuery() = {
     val query = """
       SELECT AVG(quantity)
       FROM orders
@@ -46,7 +66,7 @@ class SampleAndAggregateRewriterTest extends TestCase {
 
     checkResult(query, 0.1, 10, """
       |WITH _partitioned_query AS (
-      |  SELECT AVG(quantity) + 0 _col, MOD(ROW_NUMBER(), 251) _grp
+      |  SELECT AVG(quantity) _col, MOD(ROW_NUMBER(), 251) _grp
       |  FROM public.orders
       |  WHERE product_id = 1
       |  GROUP BY MOD(ROW_NUMBER(), 251)

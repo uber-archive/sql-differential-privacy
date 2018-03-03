@@ -2,13 +2,13 @@ package com.uber.engsec.dp.rewriting.rules
 
 import com.uber.engsec.dp.dataflow.column.AbstractColumnAnalysis.ColumnFacts
 import com.uber.engsec.dp.dataflow.column.NodeColumnFacts
-import com.uber.engsec.dp.rewriting.rules.Expr.{Abs, Case, ColumnReference, Ln, Rand, rexBuilder}
+import com.uber.engsec.dp.rewriting.rules.Expr.{ColumnReference, SqlOperatorExpr, rexBuilder}
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 import org.apache.calcite.rel.`type`.RelDataTypeSystem
 import org.apache.calcite.rex.{RexBuilder, RexNode}
-import org.apache.calcite.sql.`type`.{OperandTypes, ReturnTypes, SqlTypeFactoryImpl}
+import org.apache.calcite.sql._
+import org.apache.calcite.sql.`type`.{InferTypes, OperandTypes, ReturnTypes, SqlTypeFactoryImpl}
 import org.apache.calcite.sql.fun.SqlStdOperatorTable
-import org.apache.calcite.sql.{SqlAggFunction, SqlFunctionCategory, SqlKind, SqlOperator}
 
 import scala.collection.JavaConverters._
 
@@ -65,7 +65,13 @@ object Expr {
   }
   case class ColumnReferenceByOrdinal(idx: Int) extends ColumnReference
   case class ColumnReferenceByName(name: String) extends ColumnReference
-  class QualifiedColumnReference(override val name: String, val qualifier: RelationQualifier) extends ColumnReferenceByName(name)
+
+  sealed trait QualifiedColumnReference{
+    val qualifier: RelationQualifier
+  }
+
+  class QualifiedColumnReferenceByName(override val name: String, val qualifier: RelationQualifier) extends ColumnReferenceByName(name) with QualifiedColumnReference
+  class QualifiedColumnReferenceByOrdinal(override val idx: Int, val qualifier: RelationQualifier) extends ColumnReferenceByOrdinal(idx) with QualifiedColumnReference
 
   /** Expression literal for use in column references, e.g., project(my_col, *) and function-star syntax, e.g., COUNT(*)
     * Handled specially in places where its use is legal, so toRex should never be invoked on this object.
@@ -103,6 +109,10 @@ object Expr {
   case class GreaterThan(left: ValueExpr, right: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.GREATER_THAN, left, right) with Predicate
   case class GreaterThanOrEqual(left: ValueExpr, right: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.GREATER_THAN_OR_EQUAL, left, right) with Predicate
 
+  // Postfix operators
+  case class IsNull(expr: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.IS_NULL, expr) with Predicate
+  case class IsNotNull(expr: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.IS_NOT_NULL, expr) with Predicate
+
   // Math functions
   case class Ln(arg: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.LN, arg)
   case class Exp(arg: ValueExpr) extends SqlOperatorExpr(SqlStdOperatorTable.EXP, arg)
@@ -137,9 +147,11 @@ object Expr {
   }
 
   sealed trait RelationQualifier {
-    def apply(name: String): QualifiedColumnReference = new QualifiedColumnReference(name, this)
-    def apply(ref: ColumnReferenceByName): ColumnReference = new QualifiedColumnReference(ref.name, this)
-    def apply(col: ColumnDefinitionWithAlias[_]): QualifiedColumnReference = new QualifiedColumnReference(col.alias, this)
+    def apply(name: String): QualifiedColumnReferenceByName = new QualifiedColumnReferenceByName(name, this)
+    def apply(idx: Int): QualifiedColumnReferenceByOrdinal = new QualifiedColumnReferenceByOrdinal(idx, this)
+    def apply(ref: ColumnReferenceByName): QualifiedColumnReferenceByName = new QualifiedColumnReferenceByName(ref.name, this)
+    def apply(ord: ColumnReferenceByOrdinal): QualifiedColumnReferenceByOrdinal = new QualifiedColumnReferenceByOrdinal(ord.idx, this)
+    def apply(col: ColumnDefinitionWithAlias[_]): QualifiedColumnReferenceByName = new QualifiedColumnReferenceByName(col.alias, this)
   }
   case object left extends RelationQualifier
   case object right extends RelationQualifier
@@ -160,17 +172,32 @@ object Expr {
 
   object True extends LiteralBool(true)
   object False extends LiteralBool(false)
+
+  /** Dummy function to ensure a column alias survives to SQL output. This is due to quirk in Calcite's RelToSql code;
+    * if a relation projects only column references, Calcite will ignore the aliases specified in the projection
+    * and instead rely on the schema (and column name) of the projection's input. Projecting any compound expression
+    * prevents this from happening, so we call a dummy function which is defined below to have no impact on the output
+    * query. Rewriters should use this function on simple column projections whenever correct functionality requires
+    * the column alias to be preserved.
+    *
+    * Note that creating a call of type SqlStdOperatorTable.AS does not resolve this problem, as it instead produces
+    * _two_ AS clauses in the output query -- one from the AS function itself, and the other because the presence of the
+    * call prevents this bug from happening.
+    */
+  case class EnsureAlias(expr: ValueExpr) extends SqlOperatorExpr(SqlExtFunctions.ENSURE_ALIAS, expr)
 }
 
 /** Extensions to Calcite's built-in SQL function definitions.
   */
 object SqlExtFunctions {
   val MEDIAN = new SqlAggFunction("MEDIAN", null, SqlKind.OTHER, ReturnTypes.ARG0, null, OperandTypes.NUMERIC, SqlFunctionCategory.NUMERIC, false, true) {}
-}
 
-/** SQL expressions for differential privacy-based rewriters.
-  */
-object DPExpr {
-  // Expression to sample a random value from the Laplace distribution.
-  val LaplaceSample: ValueExpr = Case((Rand-0.5) < 0, -1.0, 1.0) * Ln(1 - (2 * Abs(Rand-0.5)))
+  val ENSURE_ALIAS = new SqlSpecialOperator("ensure_alias", SqlKind.DEFAULT, 20, true, ReturnTypes.ARG0, InferTypes.RETURN_TYPE, OperandTypes.ANY_ANY) {
+    override def unparse(writer: SqlWriter, call: SqlCall, leftPrec: Int, rightPrec: Int): Unit = call.operand[SqlNode](0).unparse(writer, leftPrec, rightPrec)
+  }
+
+  /** Generic function with caller-provided name and arguments. Use with caution as this type of expression is not
+    * validated, hence emitted query is not guaranteed to conform to standard SQL and may not run on any database.
+    */
+  case class GenericFunction(name: String, args: ValueExpr*) extends SqlOperatorExpr(new SqlFunction(name, SqlKind.OTHER_FUNCTION, ReturnTypes.ARG0, null, OperandTypes.VARIADIC, SqlFunctionCategory.SYSTEM), args: _*)
 }

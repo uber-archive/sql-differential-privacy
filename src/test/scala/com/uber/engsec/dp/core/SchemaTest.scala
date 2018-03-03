@@ -22,14 +22,14 @@ class SchemaTest extends TestCase {
       QueryParser.parseToRelTree(query1, db2)
       TestCase.fail()
     } catch {
-      case _ =>
+      case _: Exception =>
     }
 
     try {
       Schema.getDatabase("nonexistDb")
       TestCase.fail()
     } catch {
-      case _ =>
+      case _: Exception =>
     }
   }
 

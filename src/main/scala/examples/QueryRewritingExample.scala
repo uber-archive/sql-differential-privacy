@@ -1,7 +1,7 @@
 package examples
 
 import com.uber.engsec.dp.analysis.histogram.HistogramAnalysis
-import com.uber.engsec.dp.rewriting.mechanism.{ElasticSensitivityConfig, ElasticSensitivityRewriter, SampleAndAggregateConfig, SampleAndAggregateRewriter}
+import com.uber.engsec.dp.rewriting.differential_privacy.{ElasticSensitivityConfig, ElasticSensitivityRewriter, SampleAndAggregateConfig, SampleAndAggregateRewriter}
 import com.uber.engsec.dp.schema.Schema
 import com.uber.engsec.dp.sql.QueryParser
 import com.uber.engsec.dp.util.ElasticSensitivity
@@ -43,7 +43,7 @@ object QueryRewritingExample extends App {
 
     // Rewrite the original query to enforce differential privacy using Elastic Sensitivity.
     println("\nRewritten query:")
-    val config = ElasticSensitivityConfig(epsilon = EPSILON, database = database)
+    val config = new ElasticSensitivityConfig(EPSILON, database)
     val rewrittenQuery = new ElasticSensitivityRewriter(config).run(query)
     printQuery(rewrittenQuery.toSql())
   }
@@ -78,7 +78,7 @@ object QueryRewritingExample extends App {
 
     // Rewrite the original query to enforce differential privacy using Sample and Aggregate.
     println("\nRewritten query:")
-    val config = SampleAndAggregateConfig(epsilon = EPSILON, lambda = LAMBDA, database = database)
+    val config = new SampleAndAggregateConfig(EPSILON, LAMBDA, database)
     val rewrittenQuery = new SampleAndAggregateRewriter(config).run(query)
     printQuery(rewrittenQuery.toSql())
   }

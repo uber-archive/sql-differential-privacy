@@ -22,10 +22,11 @@
 
 package com.uber.engsec.dp.sql.relational_algebra
 
+import com.uber.engsec.dp.rewriting.rules.Expr.{ColumnReferenceByOrdinal, col}
 import com.uber.engsec.dp.schema.{Database, Schema}
 import org.apache.calcite.plan.hep.{HepPlanner, HepProgram}
 import org.apache.calcite.rel.RelNode
-import org.apache.calcite.rel.core.{Join, TableScan}
+import org.apache.calcite.rel.core.{Aggregate, Join, TableScan}
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter
 import org.apache.calcite.rel.rules.FilterJoinRule
 import org.apache.calcite.rex.{RexCall, RexInputRef, RexNode}
@@ -33,8 +34,14 @@ import org.apache.calcite.sql.SqlDialect.DatabaseProduct
 import org.apache.calcite.sql.SqlKind
 
 object RelUtils {
-  /** Extracts the left and right column indexes, respectively, used in an equijoin condition, or None if
-    * the join node uses any other type of join condition (including an empty join condition).
+  /** Extracts the left and right column indexes, respectively, used in an equijoin condition, or None if the join node
+    * uses any other type of join condition (including an empty join condition). Note the returned indexes are relative
+    * to the schemas of the left/right relations rather than the schema of the join.
+    *
+    * @param node The join node
+    * @param condition The clause of the join condition. If desired, caller can decompose AND-clauses in join condition
+    *                  using the [decomposeConjunction] method, and call this method on each clause.
+    * @return The indices of the equijoin columns, or None if clause is not equijoin.
     */
   def extractEquiJoinColumns(node: Join, condition: RexNode): Option[(Int,Int)] = {
     condition match {
@@ -74,6 +81,16 @@ object RelUtils {
     }
   }
 
+  /** Returns the grouped columns of an aggregation node
+    *
+    * @param agg The target aggregation node
+    * @return A list of column expressions which reference each grouping column in the aggregation.
+    */
+  def getGroupedCols(agg: Aggregate): Seq[ColumnReferenceByOrdinal] = {
+    import scala.collection.JavaConverters._
+    agg.getGroupSet.asList.asScala.map { col(_) }
+  }
+
   /** Converts the given relational algebra tree to a SQL string.
     */
   def relToSql(rel: RelNode, dialect: String): String = {
@@ -99,24 +116,34 @@ object RelUtils {
   }
 
   /******************************************************************************************************************
-    * Helper methods, may be called by analysis transfer functions.
+    * Helper methods, may be called by analyses and rewriters.
     ****************************************************************************************************************/
 
-  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
-    * config is defined for the table.
+  /** Returns the fully qualified name of the table represented by the given TableScan node.
+    */
+  def getQualifiedTableName(node: TableScan): String = {
+    import scala.collection.JavaConverters._
+    node.getTable.getQualifiedName.asScala.mkString(".")
+  }
+
+  /** Retrieves the config properties for the database table represented by the given TableScan node.
+    *
+    * @param node Node representing target table.
+    * @return Map of table properties, or empty map if no config is defined for the table.
     */
   def getTableProperties(node: TableScan, database: Database): Map[String, String] = {
-    import scala.collection.JavaConverters._
-    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
+    val tableName = getQualifiedTableName(node)
     Schema.getTableProperties(database, tableName)
   }
 
-  /** Retrieves the config properties for the database table represented by the given node. Returns empty map if no
-    * config is defined for the table/column.
+  /** Retrieves the config properties for a specific column in the given table.
+    *
+    * @param node Node representing target table.
+    * @param colIdx Column ordinal in target table.
+    * @return Map of column properties, or empty map if no config is defined for the column.
     */
   def getColumnProperties(node: TableScan, colIdx: Int, database: Database): Map[String, String] = {
-    import scala.collection.JavaConverters._
-    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
+    val tableName = RelUtils.getQualifiedTableName(node)
     val colName = node.getRowType.getFieldNames.get(colIdx)
     Schema.getSchemaMapForTable(database, tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
   }

@@ -28,7 +28,7 @@ import com.uber.engsec.dp.sql.ast.ASTFunctions
 import com.uber.engsec.dp.sql.dataflow_graph.reference.{ColumnReference, Function, UnstructuredReference}
 import com.uber.engsec.dp.sql.dataflow_graph.relation.{Relation => DFGRelation, _}
 import com.uber.engsec.dp.sql.dataflow_graph.{Node => DFGNode}
-import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, Relation}
+import com.uber.engsec.dp.sql.relational_algebra.{Expression, RelOrExpr, RelUtils, Relation}
 import com.uber.engsec.dp.util.IdentityHashMap
 import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.{Aggregate, Correlate, Filter, Project, Sort, TableScan, Values, Join => RelJoin, Union => RelUnion}
@@ -105,7 +105,7 @@ object TreePrinter {
             ("Project", p.getProjects.asScala.zipWithIndex.map{ case (node, idx) => LabeledNode(Some(s"$idx [as ${colNames(idx)}]"), Expression(node)) }.toList ++ List(LabeledNode(Some("input"), Relation(p.getInput))))
 
           case t: TableScan =>
-            ("TableScan[" + t.getTable.getQualifiedName.asScala.mkString(".") + "]", Nil)
+            ("TableScan[" + RelUtils.getQualifiedTableName(t) + "]", Nil)
 
           case a: Aggregate =>
             ("Aggregate[" + a.getAggCallList.asScala.mkString(",") + "] grouped:" + a.getGroupSet.asList.asScala.mkString(",") + " groupSets:" + a.groupSets.asScala.map{ _.toList.toString }.mkString(", "), List(LabeledNode(Some("input"), Relation(a.getInput))))

@@ -43,7 +43,7 @@ import org.apache.calcite.sql.SqlKind
 class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, SensitivityDomain) {
 
   var k: Int = 0
-  val checkBinsForRelease: Boolean = System.getProperty("dp.check_bins", "true").toBoolean
+  val checkBinsForRelease: Boolean = System.getProperty("dp.elastic_sensitivity.check_bins_for_release", "true").toBoolean
 
   override def run(_root: RelOrExpr, database: Database): NodeColumnFacts[RelStability,ColSensitivity] = {
     /** Push predicates into joins, in order to support queries with equijoin conditions specified in filters
@@ -81,8 +81,6 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
     * @param k Desired distance from true database (default 0, to approximate local sensitivity)
     */
   def setK(k: Int): Unit = this.k = k
-
-  import scala.collection.JavaConverters._
 
   override def transferAggregate(node: Aggregate,
                                  aggFunctions: IndexedSeq[Option[AggFunction]],
@@ -130,8 +128,8 @@ class ElasticSensitivityAnalysis extends RelNodeColumnAnalysis(StabilityDomain, 
   override def transferTableScan(node: TableScan,
                                  state: NodeColumnFacts[RelStability,ColSensitivity]): NodeColumnFacts[RelStability,ColSensitivity] = {
     // Fetch metadata for the table
-    val tableName = node.getTable.getQualifiedName.asScala.mkString(".")
-    val isTablePublic = RelUtils.getTableProperties(node, this.getDatabase).get("isPublic").fold(false)(_.toBoolean)
+    val tableName = RelUtils.getQualifiedTableName(node)
+    val isTablePublic = Schema.getTableProperties(this.getDatabase, tableName).get("isPublic").fold(false)(_.toBoolean)
 
     val newColFacts = state.colFacts.zipWithIndex.map { case (colState, idx) =>
       // Fetch metadata for this column
@@ -270,7 +268,7 @@ class ProtectedBinException(binName: String) extends UnsupportedQueryException(
   s"This query returns a histogram bin column ('$binName') that is not safe for release. " +
     "The bin labels must be made differentially private, which requires additional data model knowledge. " +
     "If you know what you're doing, you can disable this message by setting canRelease=true for columns of protected " +
-    "tables that are safe for release, or setting flag -Ddp.check_bins=false to disable this check entirely."
+    "tables that are safe for release, or setting flag [dp.elastic_sensitivity.check_bins_for_release] = false to disable this check."
 )
 
 /** Thrown if operations/functions were applied to post-aggregated values; this check is not needed for soundness of the
