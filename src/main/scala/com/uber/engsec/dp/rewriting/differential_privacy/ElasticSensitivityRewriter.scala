@@ -20,38 +20,21 @@
  * THE SOFTWARE.
  */
 
-package com.uber.engsec.dp.rewriting.mechanism
+package com.uber.engsec.dp.rewriting.differential_privacy
 
-import com.uber.engsec.dp.rewriting.rules.ColumnDefinition._
-import com.uber.engsec.dp.rewriting.rules.DPExpr
-import com.uber.engsec.dp.rewriting.rules.Operations._
-import com.uber.engsec.dp.rewriting.{Rewriter, RewriterConfig}
+import com.uber.engsec.dp.rewriting._
 import com.uber.engsec.dp.schema.Database
 import com.uber.engsec.dp.sql.relational_algebra.Relation
 import com.uber.engsec.dp.util.ElasticSensitivity
 
-class ElasticSensitivityRewriter(config: ElasticSensitivityConfig) extends Rewriter(config) {
-  def rewrite(root: Relation): Relation = {
-    root mapCols { col =>
-      // Compute the smooth elastic sensitivity for the column.
-      val smoothSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, config.database, col.idx, config.epsilon)
-
-      if (smoothSensitivity == 0)
-        // No noise added to histogram bins that are marked safe for release.
-        col
-      else {
-        // Rewrite the column expression to add Laplace noise scaled to the sensitivity.
-        val noiseExpr = (smoothSensitivity / config.epsilon) * DPExpr.LaplaceSample
-        (col.expr + noiseExpr) AS col.alias
-      }
-    }
-  }
+/** Rewriter that enforces differential privacy using Elastic Sensitivity. */
+class ElasticSensitivityRewriter(config: ElasticSensitivityConfig) extends SensitivityRewriter(config) {
+  def getColumnSensitivity(node: Relation, colIdx: Int): Double =
+    ElasticSensitivity.smoothElasticSensitivity(node, config.database, colIdx, config.epsilon)
 }
 
-case class ElasticSensitivityConfig(
-  /** The privacy budget. */
-  epsilon: Double,
-
-  /** The database being queried. */
-  override val database: Database
-) extends RewriterConfig(database)
+class ElasticSensitivityConfig(
+    override val epsilon: Double,
+    override val database: Database,
+    override val fillMissingBins: Boolean = true)
+  extends DPRewriterConfig(epsilon, database, fillMissingBins)

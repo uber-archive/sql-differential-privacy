@@ -16,6 +16,7 @@ databases:
     - name: "product_id"
       maxFreq: 500
       canRelease: true
+      domainSet: "products.product_id"
     - name: "quantity"
     - name: "order_cost"
   - table: "products"
