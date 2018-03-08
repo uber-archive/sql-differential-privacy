@@ -142,13 +142,13 @@ object Schema {
   * and column statistics computed from the database (e.g. maximum frequencies of join keys).
   */
 abstract trait SchemaConfigWithProperties {
-  private var internalProperties: Map[String,Any] = Map.empty
+  private var _properties : Map[String,Any] = Map.empty
   @JsonAnySetter def set(name: String, value: Any): Unit = {
-    internalProperties= internalProperties + (name -> value)
+    _properties = _properties + (name -> value)
   }
 
-  def properties = internalProperties map {case (k, v) => (k, v.toString())}
-  def get[T](propName: String) = internalProperties.get(propName).asInstanceOf[Option[T]]
+  def properties = _properties map {case (k, v) => (k, v.toString())}
+  def get[T](propName: String) = _properties.get(propName).asInstanceOf[Option[T]]
 }
 
 case class Column(name: String, fields: List[Column]) extends SchemaConfigWithProperties {}
