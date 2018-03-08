@@ -52,43 +52,30 @@ object Schema {
   // Cache of databases allowing easy lookup by name. Tables are stored in lookup table inside Database class.
   var databases: mutable.Map[String, Database] = new mutable.HashMap[String, Database]
 
-  if (TABLE_YAML_FILE_PATH.nonEmpty) parseYaml()
+  if (TABLE_YAML_FILE_PATH.nonEmpty) loadYamlFiles(TABLE_YAML_FILE_PATH.split(','))
 
-  def parseYaml(fileName: String): Databases = {
+  def loadYamlFiles(fileNames: Array[String]) = {
     // First try to load from the JAR file
     val mapper: ObjectMapper = new ObjectMapper(new YAMLFactory)
     mapper.registerModule(DefaultScalaModule)
-    try {
-      var in = this.getClass().getResourceAsStream("/" + fileName)
-      if (in == null) {
-        // If this fails, we may not be running from the JAR. Try to load the resource from disk.
-        in = new FileInputStream(fileName)
-      }
-      val reader = new BufferedReader(new InputStreamReader(in))
+    fileNames.foreach { yamlPath =>
+      try {
+        var in = this.getClass().getResourceAsStream("/" + yamlPath)
+        if (in == null) {
+          // If this fails, we may not be running from the JAR. Try to load the resource from disk.
+          in = new FileInputStream(yamlPath)
+        }
+        val reader = new BufferedReader(new InputStreamReader(in))
 
-      // Read schema information for databases from yaml file and add to internal schema.
-      return mapper.readValue(reader, classOf[Databases])
-    } catch {
-      case e: IOException => {
-        e.printStackTrace()
-        System.err.println(s"Error reading schema file '$fileName'. Exiting.")
-        System.exit(-1)
-        null
-      }
-    }
-  }
-
-  def parseYaml() {
-    clearDatabases
-
-    val yamlFiles = TABLE_YAML_FILE_PATH.split(",")
-    if (yamlFiles.length == 1) {
-      val dbs = parseYaml(yamlFiles(0))
-      addDatabases(dbs)
-    } else {
-      yamlFiles.foreach { yamlPath =>
-        val dbs = parseYaml(yamlPath)
+        // Read schema information for databases from yaml file and add to internal schema.
+        val dbs = mapper.readValue(reader, classOf[Databases])
         addDatabases(dbs)
+      } catch {
+        case e: IOException => {
+          e.printStackTrace()
+          System.err.println(s"Error reading schema file '$yamlPath'. Exiting.")
+          System.exit(-1)
+        }
       }
     }
   }
