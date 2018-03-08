@@ -54,33 +54,41 @@ object Schema {
 
   if (TABLE_YAML_FILE_PATH.nonEmpty) parseYaml()
 
-  def parseYaml() {
-    databases.clear()
+  def parseYaml(fileName: String): Databases = {
+    // First try to load from the JAR file
     val mapper: ObjectMapper = new ObjectMapper(new YAMLFactory)
     mapper.registerModule(DefaultScalaModule)
+    try {
+      var in = this.getClass().getResourceAsStream("/" + fileName)
+      if (in == null) {
+        // If this fails, we may not be running from the JAR. Try to load the resource from disk.
+        in = new FileInputStream(fileName)
+      }
+      val reader = new BufferedReader(new InputStreamReader(in))
 
+      // Read schema information for databases from yaml file and add to internal schema.
+      return mapper.readValue(reader, classOf[Databases])
+    } catch {
+      case e: IOException => {
+        e.printStackTrace()
+        System.err.println(s"Error reading schema file '$fileName'. Exiting.")
+        System.exit(-1)
+        null
+      }
+    }
+  }
+
+  def parseYaml() {
+    clearDatabases
 
     val yamlFiles = TABLE_YAML_FILE_PATH.split(",")
-    yamlFiles.foreach { yamlPath =>
-      try {
-        // First try to load from the JAR file
-        var in = this.getClass().getResourceAsStream("/" + yamlPath)
-        if (in == null) {
-          // If this fails, we may not be running from the JAR. Try to load the resource from disk.
-          in = new FileInputStream(yamlPath)
-        }
-        val reader = new BufferedReader(new InputStreamReader(in))
-
-        // Read schema information for databases from yaml file and add to internal schema.
-        val databases = mapper.readValue(reader, classOf[Databases])
-        addDatabases(databases)
-
-      } catch {
-        case e: IOException => {
-          e.printStackTrace()
-          System.err.println(s"Error reading schema file '$yamlPath'. Exiting.")
-          System.exit(-1)
-        }
+    if (yamlFiles.length == 1) {
+      val dbs = parseYaml(yamlFiles(0))
+      addDatabases(dbs)
+    } else {
+      yamlFiles.foreach { yamlPath =>
+        val dbs = parseYaml(yamlPath)
+        addDatabases(dbs)
       }
     }
   }
@@ -89,6 +97,8 @@ object Schema {
     * Add the schemas for the given set of databases.
     */
   def addDatabases(dbs: Databases) = dbs.databases.foreach { db => databases.put(db.database, db) }
+
+  def clearDatabases() = databases.clear
 
   def _normalizeTableName(database: String, tableName: String): String = {
     // Strip namespace prefix if present
@@ -145,10 +155,13 @@ object Schema {
   * and column statistics computed from the database (e.g. maximum frequencies of join keys).
   */
 abstract trait SchemaConfigWithProperties {
-  var properties: Map[String,String] = Map.empty
-  @JsonAnySetter def set(name: String, value: String): Unit = {
-    properties = properties + (name -> value)
+  private var internalProperties: Map[String,Any] = Map.empty
+  @JsonAnySetter def set(name: String, value: Any): Unit = {
+    internalProperties= internalProperties + (name -> value)
   }
+
+  def properties = internalProperties map {case (k, v) => (k, v.toString())}
+  def get[T](propName: String) = internalProperties.get(propName).asInstanceOf[Option[T]]
 }
 
 case class Column(name: String, fields: List[Column]) extends SchemaConfigWithProperties {}
