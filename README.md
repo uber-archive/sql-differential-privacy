@@ -1,5 +1,7 @@
 # Overview
 
+This is a fork of https://github.com/uber/sql-differential-privacy.
+
 This repository contains a query analysis and rewriting framework to enforce differential privacy for general-purpose
 SQL queries. The rewriting engine can automatically transform an input query into an *intrinsically private query* which
 embeds a differential privacy mechanism in the query directly; the transformed query enforces differential privacy on
