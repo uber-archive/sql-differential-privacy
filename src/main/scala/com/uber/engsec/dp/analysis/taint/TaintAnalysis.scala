@@ -34,7 +34,7 @@ class TaintAnalysis extends RelNodeColumnAnalysis(UnitDomain, BooleanDomain) {
   override def transferTableScan(node: TableScan, state: NodeColumnFacts[Unit, Boolean]) = NodeColumnFacts(
     UnitDomain.bottom,
     state.colFacts.zipWithIndex.map { case (colState, idx) =>
-      val isTainted = RelUtils.getColumnProperties(node, idx, this.getDatabase).get("isTainted").fold(false)(_.toBoolean)
+      val isTainted = RelUtils.getColumnProperty[Boolean]("isTainted", node, idx, this.getDatabase).getOrElse(false)
       isTainted
     })
 }

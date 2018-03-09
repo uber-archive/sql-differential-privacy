@@ -147,4 +147,10 @@ object RelUtils {
     val colName = node.getRowType.getFieldNames.get(colIdx)
     Schema.getSchemaMapForTable(database, tableName).get(colName).map { _.properties }.getOrElse{ Map.empty }
   }
+
+  def getColumnProperty[T](propName: String, node: TableScan, colIdx: Int, database: Database): Option[T] = {
+    val tableName = RelUtils.getQualifiedTableName(node)
+    val colName = node.getRowType.getFieldNames.get(colIdx)
+    Schema.getSchemaMapForTable(database, tableName).get(colName).get.get[T](propName)
+  }
 }
