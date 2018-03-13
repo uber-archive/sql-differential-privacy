@@ -55,7 +55,7 @@ class WPINQRewriterTest extends TestCase {
       // not equijoin condition (conjunction)
       "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = 1 AND customers.customer_id = 1",
       // not equijoin condition (two columns from the same relation)
-      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = orders.customer_id",
+      "SELECT COUNT(*) FROM orders, customers WHERE orders.customer_id = orders.customer_id"
     ).foreach{ assertUnsupported }
   }
 

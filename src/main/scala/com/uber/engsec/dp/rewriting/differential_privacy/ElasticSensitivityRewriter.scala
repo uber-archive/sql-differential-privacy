@@ -30,11 +30,12 @@ import com.uber.engsec.dp.util.ElasticSensitivity
 /** Rewriter that enforces differential privacy using Elastic Sensitivity. */
 class ElasticSensitivityRewriter(config: ElasticSensitivityConfig) extends SensitivityRewriter(config) {
   def getColumnSensitivity(node: Relation, colIdx: Int): Double =
-    ElasticSensitivity.smoothElasticSensitivity(node, config.database, colIdx, config.epsilon)
+    ElasticSensitivity.smoothElasticSensitivity(node, config.database, colIdx, config.epsilon, config.delta)
 }
 
 class ElasticSensitivityConfig(
     override val epsilon: Double,
+    val delta: Double,
     override val database: Database,
     override val fillMissingBins: Boolean = true)
   extends DPRewriterConfig(epsilon, database, fillMissingBins)

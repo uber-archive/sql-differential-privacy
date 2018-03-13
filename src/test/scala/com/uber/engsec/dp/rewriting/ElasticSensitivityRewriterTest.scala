@@ -30,9 +30,9 @@ import junit.framework.TestCase
 class ElasticSensitivityRewriterTest extends TestCase {
   val database = Schema.getDatabase("test")
 
-  def checkResult(query: String, epsilon: Double, expected: String, fillMissingBins: Boolean = false): Unit = {
+  def checkResult(query: String, epsilon: Double, delta: Double, expected: String, fillMissingBins: Boolean = false): Unit = {
     val root = QueryParser.parseToRelTree(query, database)
-    val config = new ElasticSensitivityConfig(epsilon, database, fillMissingBins)
+    val config = new ElasticSensitivityConfig(epsilon, delta, database, fillMissingBins)
     val result = new ElasticSensitivityRewriter(config).run(root)
     TestCase.assertEquals(expected.stripMargin.stripPrefix("\n"), result.toSql())
   }
@@ -47,15 +47,15 @@ class ElasticSensitivityRewriterTest extends TestCase {
       SELECT COUNT(*) FROM orders
     """
 
-    // scale of Laplace noise for epsilon 0.1 is (1/0.1) = 10
-    checkResult(query, 0.1, """
-      |SELECT COUNT(*) + 10.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
+    // scale of Laplace noise for epsilon 0.1 is 2*(1/0.1) = 20
+    checkResult(query, 0.1, 1e-8, """
+      |SELECT COUNT(*) + 20.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
       |FROM public.orders"""
     )
 
-    // scale of Laplace noise for epsilon 1 is (1/1) = 1
-    checkResult(query, 1, """
-      |SELECT COUNT(*) + 1.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
+    // scale of Laplace noise for epsilon 1 is 2*(1/1) = 2
+    checkResult(query, 1, 1e-8, """
+      |SELECT COUNT(*) + 2.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
       |FROM public.orders"""
     )
   }
@@ -67,8 +67,8 @@ class ElasticSensitivityRewriterTest extends TestCase {
       WHERE orders.product_id = 1
     """
 
-    checkResult(query, 0.1, """
-      |SELECT COUNT(*) + 2500.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
+    checkResult(query, 0.1, 1e-8, """
+      |SELECT COUNT(*) + 5409.181856298167 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
       |FROM (SELECT customer_id, product_id
       |FROM public.orders) t
       |INNER JOIN (SELECT customer_id
@@ -85,9 +85,9 @@ class ElasticSensitivityRewriterTest extends TestCase {
       GROUP BY 1
     """
 
-    // Result without filling histogram bins
-    checkResult(query, 0.1, """
-      |SELECT t.product_id, COUNT(*) + 40000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
+
+    checkResult(query, 0.1, 1e-8, """
+      |SELECT t.product_id, COUNT(*) + 80000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
       |FROM (SELECT product_id
       |FROM public.orders) t
       |INNER JOIN (SELECT product_id
@@ -97,7 +97,7 @@ class ElasticSensitivityRewriterTest extends TestCase {
     )
 
     // Test histogram bin enumeration
-    checkResult(query, 0.1, """
+    checkResult(query, 0.1, 1e-8, """
       |WITH _orig AS (
       |  SELECT t.product_id, COUNT(*) _agg
       |  FROM (SELECT product_id
@@ -107,7 +107,7 @@ class ElasticSensitivityRewriterTest extends TestCase {
       |  WHERE t.product_id = 1
       |  GROUP BY t.product_id
       |)
-      |SELECT t0._domain product_id, CASE WHEN product_id IS NULL THEN 0 ELSE _agg END + 40000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
+      |SELECT t0._domain product_id, CASE WHEN product_id IS NULL THEN 0 ELSE _agg END + 80000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5)))
       |FROM (SELECT product_id, _agg
       |FROM _orig) t
       |RIGHT JOIN (SELECT product_id _domain
@@ -125,7 +125,7 @@ class ElasticSensitivityRewriterTest extends TestCase {
     """
 
     // Test histogram bin enumeration when aggregation already has explicit alias
-    checkResult(query, 0.1, """
+    checkResult(query, 0.1, 1e-8, """
         |WITH _orig AS (
         |  SELECT t.product_id, COUNT(*) mycount
         |  FROM (SELECT product_id
@@ -135,7 +135,7 @@ class ElasticSensitivityRewriterTest extends TestCase {
         |  WHERE t.product_id = 1
         |  GROUP BY t.product_id
         |)
-        |SELECT t0._domain product_id, CASE WHEN product_id IS NULL THEN 0 ELSE mycount END + 40000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5))) mycount
+        |SELECT t0._domain product_id, CASE WHEN product_id IS NULL THEN 0 ELSE mycount END + 80000.0 * (CASE WHEN RAND() - 0.5 < 0 THEN -1.0 ELSE 1.0 END * LN(1 - 2 * ABS(RAND() - 0.5))) mycount
         |FROM (SELECT product_id, mycount
         |FROM _orig) t
         |RIGHT JOIN (SELECT product_id _domain

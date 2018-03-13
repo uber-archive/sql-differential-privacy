@@ -55,9 +55,10 @@ object ElasticSensitivity {
     * @param query The input query
     * @param col The index of the target column (0-based)
     * @param epsilon The desired privacy budget
+    * @param delta The value of the delta parameter
     * @return The smoothed elastic sensitivity
     */
-  def smoothElasticSensitivity(query: Relation, database: Database, col: Int, epsilon: Double): Double = {
+  def smoothElasticSensitivity(query: Relation, database: Database, col: Int, epsilon: Double, delta: Double): Double = {
     /** Calculates the smooth elastic sensitivity by recursively computing smooth sensitivity for each value of k
       * until the function decreases at k+1. Since elastic sensitivity increases polynomially (at worst) in k while the
       * smoothing factor decays exponentially in k, this provides the correct (maximum) smooth sensitivity without
@@ -65,7 +66,8 @@ object ElasticSensitivity {
       */
     def sensitivityAtDistance(k: Int, prevSensitivity: Double, esStream: Stream[Double]): Double = {
       val elasticSensitivityAtK = esStream.head
-      val smoothSensitivity = Math.exp(-k * epsilon) * elasticSensitivityAtK
+      val beta = epsilon / (2 * Math.log(2 / delta))
+      val smoothSensitivity = 2 * Math.exp(-k * beta) * elasticSensitivityAtK
 
       if ((elasticSensitivityAtK == 0) || (smoothSensitivity < prevSensitivity)) prevSensitivity
       else sensitivityAtDistance(k+1, smoothSensitivity, esStream.tail)
@@ -79,11 +81,12 @@ object ElasticSensitivity {
     * @param query The input query. It must return a single row and single column.
     * @param result The non-private result of running the query (a single number).
     * @param epsilon The desired privacy budget (e.g. 0.1).
+    * @param delta The desired delta parameter (e.g. 1/n^2)
     * @return A differentially private answer to the input query.
     */
-  def addNoise(query: String, database: Database, result: Double, epsilon: Double): Double = {
+  def addNoise(query: String, database: Database, result: Double, epsilon: Double, delta: Double): Double = {
     val tree = QueryParser.parseToRelTree(query, database)
-    val sensitivity = ElasticSensitivity.smoothElasticSensitivity(tree, database, 0, epsilon)
+    val sensitivity = ElasticSensitivity.smoothElasticSensitivity(tree, database, 0, epsilon, delta)
     result + laplace(sensitivity / epsilon)
   }
 }

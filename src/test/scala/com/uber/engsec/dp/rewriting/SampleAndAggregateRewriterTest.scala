@@ -53,7 +53,7 @@ class SampleAndAggregateRewriterTest extends TestCase {
       // max function not supported (non private)
       "SELECT MAX(quantity) FROM orders WHERE product_id = 1",
       // the mechanism cannot handle queries with joins
-      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = 1",
+      "SELECT COUNT(*) FROM orders JOIN customers ON orders.customer_id = 1"
     ).foreach{ assertUnsupported }
   }
 

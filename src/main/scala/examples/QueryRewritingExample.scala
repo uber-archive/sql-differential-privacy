@@ -15,6 +15,8 @@ object QueryRewritingExample extends App {
 
   // privacy budget
   val EPSILON = 0.1
+  // delta parameter: use 1/n^2, with n = 100000
+  val DELTA = 1 / (math.pow(100000,2))
 
   // Helper function to print queries with indentation.
   def printQuery(query: String) = println(s"\n  " + query.replaceAll("\\n", s"\n  ") + "\n")
@@ -37,13 +39,13 @@ object QueryRewritingExample extends App {
 
     // Compute mechanism parameter values from the query. Note the rewriter does this automatically; here we calculate
     // the values manually so we can print them.
-    val elasticSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, database, 0, EPSILON)
+    val elasticSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, database, 0, EPSILON, DELTA)
     println(s"> Elastic sensitivity of this query: $elasticSensitivity")
     println(s"> Required scale of Laplace noise: $elasticSensitivity / $EPSILON = ${elasticSensitivity/EPSILON}")
 
     // Rewrite the original query to enforce differential privacy using Elastic Sensitivity.
     println("\nRewritten query:")
-    val config = new ElasticSensitivityConfig(EPSILON, database)
+    val config = new ElasticSensitivityConfig(EPSILON, DELTA, database)
     val rewrittenQuery = new ElasticSensitivityRewriter(config).run(query)
     printQuery(rewrittenQuery.toSql())
   }

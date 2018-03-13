@@ -58,12 +58,14 @@ object ElasticSensitivityExample extends App {
 
   // privacy budget
   val EPSILON = 0.1
+  // delta parameter: use 1/n^2, with n = 100000
+  val DELTA = 1 / (math.pow(100000,2))
 
   println(s"Query: $query")
   println(s"Private result: $QUERY_RESULT\n")
 
   (1 to 10).foreach { i =>
-    val noisyResult = ElasticSensitivity.addNoise(query, database, QUERY_RESULT, EPSILON)
+    val noisyResult = ElasticSensitivity.addNoise(query, database, QUERY_RESULT, EPSILON, DELTA)
     println(s"Noisy result (run $i): %.0f".format(noisyResult))
   }
 }
