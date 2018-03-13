@@ -10,14 +10,14 @@ import org.apache.calcite.rel.core.Aggregate
 
 
 /** Parent class for sensitivity-based mechanisms, which add Laplace noise scaled to each output column's sensitivity.
-  * Each mechanism has a specific way of computing this sensitivity for its supported class of queries.
+  * Each mechanism has a specific way of computing the scale of this noise for its supported class of queries.
   *
   * See [ElasticSensitivityRewriter] and [RestrictedSensitivityRewriter].
   */
 abstract class SensitivityRewriter[C <: DPRewriterConfig](config: C) extends Rewriter(config) {
 
-  /** Returns the sensitivity for the given column as defined by the mechanism. Implemented by subclasses. */
-  def getColumnSensitivity(node: Relation, colIdx: Int): Double
+  /** Returns the scale of Laplace noise required for the given column as defined by the mechanism. Implemented by subclasses. */
+  def getLaplaceNoiseScale(node: Relation, colIdx: Int): Double
 
   def rewrite(root: Relation): Relation = {
     root.rewriteRecursive(UnitDomain) { (node, orig, _) =>
@@ -32,15 +32,15 @@ abstract class SensitivityRewriter[C <: DPRewriterConfig](config: C) extends Rew
             else Relation(a)
 
           val result = withFilledBins.mapCols { col =>
-            // Compute the smooth elastic sensitivity for the column.
-            val sensitivity = getColumnSensitivity(node, col.idx)
+            // Compute the scale of Laplace noise for the column.
+            val laplaceNoiseScale = getLaplaceNoiseScale(node, col.idx)
 
-            if (sensitivity == 0)
+            if (laplaceNoiseScale == 0)
             // No noise added to histogram bins that are marked safe for release.
               col
             else {
-              // Rewrite the column expression to add Laplace noise scaled to the sensitivity.
-              val noiseExpr = (sensitivity / config.epsilon) * DPUtil.LaplaceSample
+              // Rewrite the column expression to add scaled Laplace noise.
+              val noiseExpr = laplaceNoiseScale * DPUtil.LaplaceSample
               (col.expr + noiseExpr) AS col.alias
             }
           }

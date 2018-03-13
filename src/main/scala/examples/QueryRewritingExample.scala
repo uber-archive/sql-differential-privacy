@@ -41,7 +41,7 @@ object QueryRewritingExample extends App {
     // the values manually so we can print them.
     val elasticSensitivity = ElasticSensitivity.smoothElasticSensitivity(root, database, 0, EPSILON, DELTA)
     println(s"> Elastic sensitivity of this query: $elasticSensitivity")
-    println(s"> Required scale of Laplace noise: $elasticSensitivity / $EPSILON = ${elasticSensitivity/EPSILON}")
+    println(s"> Required scale of Laplace noise: 2 * $elasticSensitivity / $EPSILON = ${2 * elasticSensitivity/EPSILON}")
 
     // Rewrite the original query to enforce differential privacy using Elastic Sensitivity.
     println("\nRewritten query:")

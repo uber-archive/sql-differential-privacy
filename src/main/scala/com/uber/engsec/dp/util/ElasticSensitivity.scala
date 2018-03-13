@@ -67,7 +67,7 @@ object ElasticSensitivity {
     def sensitivityAtDistance(k: Int, prevSensitivity: Double, esStream: Stream[Double]): Double = {
       val elasticSensitivityAtK = esStream.head
       val beta = epsilon / (2 * Math.log(2 / delta))
-      val smoothSensitivity = 2 * Math.exp(-k * beta) * elasticSensitivityAtK
+      val smoothSensitivity = Math.exp(-k * beta) * elasticSensitivityAtK
 
       if ((elasticSensitivityAtK == 0) || (smoothSensitivity < prevSensitivity)) prevSensitivity
       else sensitivityAtDistance(k+1, smoothSensitivity, esStream.tail)
@@ -87,6 +87,6 @@ object ElasticSensitivity {
   def addNoise(query: String, database: Database, result: Double, epsilon: Double, delta: Double): Double = {
     val tree = QueryParser.parseToRelTree(query, database)
     val sensitivity = ElasticSensitivity.smoothElasticSensitivity(tree, database, 0, epsilon, delta)
-    result + laplace(sensitivity / epsilon)
+    result + laplace(2 * sensitivity / epsilon)
   }
 }

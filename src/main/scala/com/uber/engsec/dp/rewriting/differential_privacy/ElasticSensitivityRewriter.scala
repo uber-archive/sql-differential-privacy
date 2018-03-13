@@ -29,8 +29,8 @@ import com.uber.engsec.dp.util.ElasticSensitivity
 
 /** Rewriter that enforces differential privacy using Elastic Sensitivity. */
 class ElasticSensitivityRewriter(config: ElasticSensitivityConfig) extends SensitivityRewriter(config) {
-  def getColumnSensitivity(node: Relation, colIdx: Int): Double =
-    ElasticSensitivity.smoothElasticSensitivity(node, config.database, colIdx, config.epsilon, config.delta)
+  def getLaplaceNoiseScale(node: Relation, colIdx: Int): Double =
+    2 * ElasticSensitivity.smoothElasticSensitivity(node, config.database, colIdx, config.epsilon, config.delta) / config.epsilon
 }
 
 class ElasticSensitivityConfig(
