@@ -29,11 +29,13 @@ import com.fasterxml.jackson.annotation.{JsonAnySetter, JsonProperty}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import com.uber.engsec.dp.schema.Schema._normalizeTableName
+import com.uber.engsec.dp.schema.Schema.stripNamespacePrefix
+import org.apache.calcite.linq4j.Enumerable
 import org.apache.calcite.rel.`type`.{RelDataType, RelDataTypeFactory, StructKind}
-import org.apache.calcite.schema
+import org.apache.calcite.schema.ScannableTable
 import org.apache.calcite.schema.impl.{AbstractSchema, AbstractTable}
 import org.apache.calcite.sql.`type`.SqlTypeName
+import org.apache.calcite.{DataContext, schema}
 
 import scala.collection.mutable
 
@@ -87,26 +89,21 @@ object Schema {
 
   def clearDatabases() = databases.clear
 
-  def _normalizeTableName(database: String, tableName: String): String = {
-    // Strip namespace prefix if present
-    val dbNamespace = databases(database).namespace
-    val namespacePrefix = s"${dbNamespace}."
-    if (tableName.startsWith(namespacePrefix))
-      tableName.substring(namespacePrefix.length)
-    else
-      tableName
-  }
+  def stripNamespacePrefix(database: Database, tableName: String): String = tableName.stripPrefix(s"${database.namespace}.")
 
-  def getDatabase(database: String) = databases.getOrElse(database, throw new IllegalArgumentException(s"Unknown database '$database'. Did you define this database in the schema?"))
-  def getTableMapForDatabase(database: String): Map[String, Table] = getDatabase(database).tableMap
+  /**
+    * Returns a reference to the database with the given name.
+    */
+  def getDatabase(database: String) = databases.getOrElse(database, throw new IllegalArgumentException(s"Unknown database '${database}'. Did you define this database in the schema?"))
+
+  def getTableMapForDatabase(database: Database): Map[String, Table] = database.tableMap
 
   /**
     * Returns the list of columns for the given database tables, or Nil if the table is not found in the schema.
     */
-  def getSchemaForTable(database: Database, tableName: String): List[Column] = getSchemaForTable(database.database, tableName)
-  def getSchemaForTable(database: String, tableName: String): List[Column] = {
+  def getSchemaForTable(database: Database, tableName: String): List[Column] = {
     val tables = getTableMapForDatabase(database)
-    val normalizedTableName = _normalizeTableName(database, tableName)
+    val normalizedTableName = stripNamespacePrefix(database, tableName)
 
     if (!tables.contains(normalizedTableName)) {
       val fullyQualifiedName = s"$database.$normalizedTableName"
@@ -120,20 +117,18 @@ object Schema {
     tables(normalizedTableName).columns
   }
 
-  def getSchemaMapForTable(database: Database, tableName: String): Map[String, Column] = getSchemaMapForTable(database.database, tableName)
-  def getSchemaMapForTable(database: String, tableName: String): Map[String, Column] = {
+  def getSchemaMapForTable(database: Database, tableName: String): Map[String, Column] = {
     val tables = getTableMapForDatabase(database)
-    val normalizedTableName = _normalizeTableName(database, tableName)
+    val normalizedTableName = stripNamespacePrefix(database, tableName)
     tables.get(normalizedTableName).map{ _.columnMap }.getOrElse(Map.empty)
   }
 
   /** Retrieves the config properties for the database table represented by the given table. Returns empty map if no
     * config is defined for the table.
     */
-  def getTableProperties(database: Database, tableName: String): Map[String, String] = getTableProperties(database.database, tableName)
-  def getTableProperties(database: String, tableName: String): Map[String, String] = {
+  def getTableProperties(database: Database, tableName: String): Map[String, String] = {
     val tables = getTableMapForDatabase(database)
-    val normalizedTableName = _normalizeTableName(database, tableName)
+    val normalizedTableName = stripNamespacePrefix(database, tableName)
     tables.get(normalizedTableName).map { _.properties }.getOrElse(Map.empty)
   }
 }
@@ -156,12 +151,24 @@ case class Column(name: String, fields: List[Column]) extends SchemaConfigWithPr
 /** Model of a specific database, including namespace and schema information. Consulted by
   * framework during query translation and analysis.
   */
-case class Database(database: String, dialect: String, namespace: String, tables: List[Table]) {
+case class Database(
+    database: String,
+    dialect: String,
+    namespace: String,
+    tables: List[Table] = Nil) {
   val tableMap = tables.map{ table => table.name -> table }.toMap
 
   def getSchemaMapForTable(tableName: String): Map[String, Column] = {
-    val normalizedTableName = _normalizeTableName(database, tableName)
+    val normalizedTableName = stripNamespacePrefix(this, tableName)
     tableMap.get(normalizedTableName).map{ _.columnMap }.getOrElse(Map.empty)
+  }
+
+  /** Clones the schema for the database but specifies a different query dialect */
+  def withDialect(_dialect: String): Database = {
+    val _tableMap = tableMap
+    new Database(database, _dialect, namespace, Nil) {
+      override val tableMap = _tableMap
+    }
   }
 }
 
@@ -173,8 +180,10 @@ case class Table(@JsonProperty("table") name: String, columns: List[Column]) ext
 
 case class Tables(tables: List[Table])
 
-class CalciteTable(table: Table) extends AbstractTable {
+class CalciteTable(table: Table) extends AbstractTable with ScannableTable {
   import scala.collection.JavaConverters._
+
+  override def scan(root: DataContext): Enumerable[Array[AnyRef]] = ???
 
   def schemaToStruct(fields: List[Column], typeFactory: RelDataTypeFactory, structKind: StructKind = StructKind.FULLY_QUALIFIED): RelDataType = {
     if (fields == null || fields.isEmpty)
@@ -200,14 +209,14 @@ class CalciteSchemaFromConfig(database: Database) extends AbstractSchema {
   val tableMap = new util.HashMap[String, schema.Table]()
   val subSchemaMap = new mutable.HashMap[String, mutable.Set[(String, schema.Table)]] with mutable.MultiMap[String, (String, schema.Table)]
 
-  Schema.getTableMapForDatabase(database.database).values.foreach { table =>
+  Schema.getTableMapForDatabase(database).values.foreach { table =>
     if (table.name.contains(".")) {
       val prefixIdx = table.name.indexOf(".")
       val subschemaName = table.name.substring(0, prefixIdx)
       val tableName = table.name.substring(prefixIdx+1)
       subSchemaMap.addBinding(subschemaName, (tableName, new CalciteTable(table).asInstanceOf[schema.Table]))
     } else {
-      val calciteTable = new CalciteTable(table).asInstanceOf[schema.Table]
+      val calciteTable = new CalciteTable(table)
       tableMap.put(table.name, calciteTable)
     }
   }

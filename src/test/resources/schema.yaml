@@ -44,7 +44,7 @@ databases:
 
 - database: "test2"
   dialect: "hive"
-  namespace: "public"
+  namespace: ""
   tables:
   - table: "my_table"
     columns:

@@ -22,23 +22,24 @@
 package com.uber.engsec.dp.sql.relational_algebra
 
 import java.util
-import java.util.Properties
+import java.util.{Collections, Properties}
 
 import com.google.common.collect.ImmutableList
 import com.uber.engsec.dp.schema.{CalciteSchemaFromConfig, Database}
 import org.apache.calcite.avatica.util.{Casing, Quoting}
-import org.apache.calcite.jdbc.CalciteSchema
+import org.apache.calcite.jdbc.{CalciteSchema, SchemaAdapter}
 import org.apache.calcite.plan._
 import org.apache.calcite.prepare.CalciteCatalogReader
 import org.apache.calcite.rel.`type`._
 import org.apache.calcite.rel.metadata.CachingRelMetadataProvider
 import org.apache.calcite.rel.{RelNode, RelRoot}
 import org.apache.calcite.rex.{RexBuilder, RexExecutor}
-import org.apache.calcite.schema.SchemaPlus
+import org.apache.calcite.schema.{Schema, SchemaPlus}
 import org.apache.calcite.sql.SqlOperatorTable
 import org.apache.calcite.sql.`type`.SqlTypeFactoryImpl
 import org.apache.calcite.sql.parser.SqlParser
-import org.apache.calcite.sql.validate.{SqlConformance, SqlConformanceEnum, SqlValidatorImpl}
+import org.apache.calcite.sql.parser.impl.SqlParserImpl
+import org.apache.calcite.sql.validate.{SqlConformance, SqlConformanceEnum, SqlValidator, SqlValidatorImpl}
 import org.apache.calcite.sql2rel.{RelDecorrelator, SqlRexConvertletTable, SqlToRelConverter}
 import org.apache.calcite.tools._
 
@@ -48,6 +49,7 @@ import scala.collection.mutable
 object Transformer {
   // Cache of framework configuration (includes schema, parsing options, etc.) for each database
   val databaseConfig: mutable.Map[String, FrameworkConfig] = new mutable.HashMap[String, FrameworkConfig]
+  val databaseSchema: mutable.Map[String, CalciteSchemaFromConfig] = new mutable.HashMap[String, CalciteSchemaFromConfig]
 
   val relTypeSystem: RelDataTypeSystem = new RelDataTypeSystemImpl() {}
   val conformanceProperties = new Properties()
@@ -64,24 +66,28 @@ object Transformer {
   }
 
   def getConfigForDatabase(database: Database): FrameworkConfig = {
-    val rootSchema = Frameworks.createRootSchema(true)
-    val schema = new CalciteSchemaFromConfig(database)
-
+    val schema = getSchemaForDatabase(database)
+    val rootSchema = SchemaAdapter.toRootSchemaPlus(schema, database.namespace)
     val parserConfig = getParserConfigForDialect(database.dialect)
 
     Frameworks.newConfigBuilder
-      .defaultSchema(rootSchema.add(database.namespace, schema))
+      .defaultSchema(rootSchema)
       .parserConfig(parserConfig)
       .build
   }
 
+  def getSchemaForDatabase(database: Database): Schema = {
+    databaseSchema.getOrElseUpdate(database.database, new CalciteSchemaFromConfig(database))
+  }
+
   def create(database: Database): Transformer = {
     val config = databaseConfig.getOrElseUpdate(database.database, getConfigForDatabase(database))
-    new Transformer(config)
+    new Transformer(config, Some(database))
   }
 }
 
-class Transformer(val config: FrameworkConfig) {
+class Transformer(val config: FrameworkConfig,
+                  val database: Option[Database] = None) {
   val operatorTable: SqlOperatorTable = config.getOperatorTable
   val programs: ImmutableList[Program] = config.getPrograms
   val traitDefs: ImmutableList[RelTraitDef[_ <: RelTrait]] = config.getTraitDefs
@@ -92,8 +98,9 @@ class Transformer(val config: FrameworkConfig) {
   val defaultSchema = config.getDefaultSchema
   var typeFactory: RelDataTypeFactory = new SqlTypeFactoryImpl(Transformer.relTypeSystem)
   var planner: RelOptPlanner = null
+  var schema: RelOptSchema = null
 
-  var validator: SqlValidatorImpl = null
+  var validator: SqlValidator = null
   var root: RelRoot = null
 
   def getEmptyTraitSet: RelTraitSet = planner.emptyTraitSet
@@ -102,6 +109,7 @@ class Transformer(val config: FrameworkConfig) {
     override def apply(cluster: RelOptCluster, relOptSchema: RelOptSchema, rootSchema: SchemaPlus): Void = {
       planner = cluster.getPlanner
       planner.setExecutor(executor)
+      schema = relOptSchema
       null.asInstanceOf[Void]
     }
   }, this.config)
@@ -166,9 +174,10 @@ class Transformer(val config: FrameworkConfig) {
     }
   }
 
-  def createCatalogReader = {
-    val _rootSchema = rootSchema(defaultSchema)
-    new CalciteCatalogReader(CalciteSchema.from(_rootSchema), CalciteSchema.from(defaultSchema).path(null), typeFactory, null)
+  def createCatalogReader: CalciteCatalogReader = {
+    val _rootSchema = defaultSchema
+    val _defaultPath = Collections.singletonList(database.map{ _.namespace }.getOrElse(""))
+    new CalciteCatalogReader(CalciteSchema.from(_rootSchema), _defaultPath, typeFactory, null)
   }
 
   def rootSchema(schema: SchemaPlus): SchemaPlus = {

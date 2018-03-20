@@ -33,9 +33,9 @@ class SchemaTest extends TestCase {
     }
   }
 
-  def testNamespaceAndSubschema(): Unit = {
+  def testSchemaWithEmptyNamespace(): Unit = {
+    QueryParser.parseToRelTree("SELECT my_col FROM my_table", db2)
     QueryParser.parseToRelTree("SELECT col FROM subschema.tbl", db2)
-    QueryParser.parseToRelTree("SELECT col FROM public.subschema.tbl", db2)
   }
 
   def testStructuredColumn(): Unit = {

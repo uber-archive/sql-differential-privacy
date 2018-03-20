@@ -414,12 +414,19 @@ object Operations {
 
       val targetNode = Relation(root)
       val newColumns = transformationRule(columns)
-        // replace wildcard reference (*) with original columns
-        .flatMap{ newCol => if (newCol.expr eq Expr.*) columns else List(newCol) }
-        .map{ col => (col, col.expr.toRex(targetNode)) }
 
-      val newProject = LogicalProject.create(root, newColumns.map{ _._2 }.asJava, getRecordType(newColumns))
-      Relation(newProject)
+      // If columns did not change, return same relation.
+      if (newColumns == columns)
+        root
+      else {
+        // replace wildcard reference (*) with original columns
+        val newColExprs =
+          newColumns.flatMap{ newCol => if (newCol.expr eq Expr.*) columns else List(newCol) }
+                    .map{ col => (col, col.expr.toRex(targetNode)) }
+
+        val newProject = LogicalProject.create(root, newColExprs.map{ _._2 }.asJava, getRecordType(newColExprs))
+        Relation(newProject)
+      }
     }
   }
 
